@@ -70,12 +70,13 @@ const API = (() => {
   // ── Payments ────────────────────────────────────────────────────────────
   async function getPayments(filter)           { return window.electronAPI.getPayments(filter); }
   async function getSalaryCalculation(id, m, y){ return window.electronAPI.getSalaryCalculation(id, m, y); }
+  async function calculateAll(m, y)            { return window.electronAPI.calculateAll(m, y); }
 
   async function createPayment(data) {
-    // data.otherDeductions comes in as ₹ from form, rest already in paisa from calculation
     return window.electronAPI.createPayment({
       ...data,
       otherDeductions: toPaisa(data.otherDeductionsRupees || 0),
+      paidAmount: toPaisa(data.paidAmountRupees || 0),
     });
   }
   async function updatePayment(id, data) { return window.electronAPI.updatePayment(id, data); }
@@ -87,6 +88,11 @@ const API = (() => {
   async function exportMonthlyPdf(m, y)      { return window.electronAPI.exportMonthlyPdf(m, y); }
   async function exportMonthlyExcel(m, y)    { return window.electronAPI.exportMonthlyExcel(m, y); }
   async function exportEmployeeExcel(empId)  { return window.electronAPI.exportEmployeeExcel(empId); }
+  async function exportDailyAttendanceExcel(date) { return window.electronAPI.exportDailyAttendanceExcel(date); }
+
+  // ── Settings ────────────────────────────────────────────────────────────
+  async function getSettings()               { return window.electronAPI.getSettings(); }
+  async function saveSettings(data)          { return window.electronAPI.saveSettings(data); }
 
   // ── Backup ──────────────────────────────────────────────────────────────
   async function exportBackup() { return window.electronAPI.exportBackup(); }
@@ -105,9 +111,11 @@ const API = (() => {
     // Advances
     getAdvances, getAdvanceSummary, addAdvance, deleteAdvance,
     // Payments
-    getPayments, getSalaryCalculation, createPayment, updatePayment, deletePayment,
+    getPayments, getSalaryCalculation, calculateAll, createPayment, updatePayment, deletePayment,
     // Reports
-    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportMonthlyExcel, exportEmployeeExcel,
+    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportMonthlyExcel, exportEmployeeExcel, exportDailyAttendanceExcel,
+    // Settings
+    getSettings, saveSettings,
     // Backup
     exportBackup, importBackup,
   };

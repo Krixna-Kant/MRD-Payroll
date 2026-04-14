@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Payments ──────────────────────────────────────────────────────────────
   getPayments:         (filter)  => ipcRenderer.invoke('payments:get', filter),
   getSalaryCalculation:(empId, month, year) => ipcRenderer.invoke('payments:calculate', empId, month, year),
+  calculateAll:        (month, year) => ipcRenderer.invoke('payments:calculateAll', month, year),
   createPayment:       (data)    => ipcRenderer.invoke('payments:create', data),
   updatePayment:       (id, data)=> ipcRenderer.invoke('payments:update', id, data),
   deletePayment:       (id)      => ipcRenderer.invoke('payments:delete', id),
@@ -48,6 +49,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportMonthlyPdf:     (month, year)        => ipcRenderer.invoke('reports:monthlyPdf', month, year),
   exportMonthlyExcel:   (month, year)        => ipcRenderer.invoke('reports:monthlyExcel', month, year),
   exportEmployeeExcel:  (empId)              => ipcRenderer.invoke('reports:employeeExcel', empId),
+  exportDailyAttendanceExcel: (date)         => ipcRenderer.invoke('reports:dailyAttendanceExcel', date),
+
+  // ── Settings ──────────────────────────────────────────────────────────────
+  getSettings:          ()                   => ipcRenderer.invoke('settings:getAll'),
+  saveSettings:         (data)               => ipcRenderer.invoke('settings:save', data),
 
   // ── Backup ────────────────────────────────────────────────────────────────
   exportBackup:   ()             => ipcRenderer.invoke('backup:export'),

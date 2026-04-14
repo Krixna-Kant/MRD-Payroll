@@ -3,58 +3,60 @@
 Professional and fully offline payroll management software tailored explicitly for robust attendance tracking and financial accountability. This system acts as a standalone desktop application built on Electron, Node.js, and SQLite.
 
 ## Core Features
+The system brings automation and precision to managing medium scale staff requirements without needing cloud dependency.
 
-### Employee Management
-- Complete profile tracking including Role, Phone Number, Basic Monthly Salary, and Joining Date logic.
-- Maintains historical employment records locally.
+### Employee & Project Management
+- **Complete Profile Tracking:** Stores employee Roles, Phone Numbers, Basic Monthly Salaries, and start-dates natively.
+- **Dynamic Site Projects:** Administrators can define custom workspace locations (projects). The daily attendance module incorporates drop-downs to associate daily presence with distinct company projects.
 
-### Attendance Engine
-- Bulk Daily and Monthly visual interface.
-- Automatic In/Out time tracking linked directly to Standard Hourly constraints.
-- Integrated Overtime calculations accurately resolving beyond 9-hour work days.
-- Joining-Date Safeguard restricts attendance interactions before an employee's starting date.
-- Sunday Premium Rule triggers an automatic double-rate modifier on flagged weekend days.
+### Dynamic Attendance Engine
+- **Bulk Workflows with Auto-Save:** Optimized UI that saves records in real-time without requiring "Save All" clicks, increasing data entry efficiency.
+- **Overtime Calculations:** Granular control over hours. The internal rules automatically discard any overtime logged short of a strict 1-hour minimum threshold to maintain operational standards.
+- **Advanced Navigation and Insights:** Seamless forward/backward day traversal and real-time live snapshot of team disposition (Present/Absent counts and project mapping) reflected directly on the dashboard.
 
-### Salary Processing & Advances
-- Prorated financial calculations built on pure attendance logs.
-- Issuing Advance logic linked across subsequent periods.
-- Advance Carry Forward mechanism automatically preserves and propagates unpaid advances down to successive pay periods if drawn balances exceed total effective earnings.
+### Comprehensive Salary Processing
+- **Batch Evaluation:** Salary calculation routes analyze arrays of employees at once, building a master "Monthly Processing" interface to evaluate organization-wide financial obligations within microseconds.
+- **Partial & Custom Payments:** Allows payroll delegates to input an exact "Actual Amount Paid". 
+- **Systemic Arrears & Advances:** Instead of manually maintaining ledgers, overpayments logically morph into carry-forward advances for the following month. Underpayments automatically log as deficit arrears, rolling debts safely into the next cycle.
+
+### Reporting & Documentation
+- **XLSX & PDF Generation:** Built-in exporters for generating fully formatted Monthly PDF ledgers, Payslips, and detailed Daily Attendance Excel sheets.
 
 ## Technical Architecture
 
-- Presentation Layer: HTML, Vanilla CSS, JS
-- Middle Layer: Electron IPC
-- Backend / Logic: Node.js (Local execution)
-- Database: SQLite via `better-sqlite3`
+- **Presentation Layer:** HTML, Vanilla CSS, JS (No complex UI frameworks, pure performance).
+- **Middle Layer:** Electron IPC (Fast, secure bridge between UI and underlying logic).
+- **Backend / Logic:** Node.js (Pure localized runtime execution).
+- **Database:** SQLite via `better-sqlite3`
 
-*Note: The system entirely stores financial data internally as absolute integers (Paisa form) to avoid any floating-point arithmetic errors.*
+*Note: The system securely executes all core financial calculations internally as integers (Paisa scaling). Doing so mathematically eliminates all floating-point irregularities present in standard IEEE 754 logic.*
 
 ## Installation & Build Instructions
 
 ### Development Setup
-Ensure Node.js is installed.
+Ensure Node.js and system build tools (Python, Visual Studio C++) are installed for SQLite compilation.
 
 ```bash
-# Install NPM modules locally
+# Install local packages and build native modules
 npm install
 
-# Start Local Dev environment
+# Start Local Developer Environment
 npm start
 ```
 
-### Building for Production
-To package the tool into a robust Windows executable `.exe`:
+### Packaging for Release
+To package the tool into a rigid Windows executable binary `.exe`:
 
 ```bash
 npm run build:win
 ```
 
-*Or, utilizing the immediate electron-packager:*
+*For immediate native compilation without installer wrappers:*
 ```bash
 npx electron-packager . LocalPayroll --platform=win32 --arch=x64 --out=dist --overwrite
 ```
 
-This will output the finalized build product to `./dist/LocalPayroll-win32-x64/`.
+This will transport the finalized build context into `./dist/LocalPayroll-win32-x64/`.
 
-## Data Storage
-The entire application runs purely offline. User data, settings, and structural history are securely maintained in standard local SQLite files (`app.db`) stored within the user's localized AppData directory under `LocalPayroll`. No data is ever transmitted to cloud instances.
+## Data Authority & Privacy
+The application strictly enforces an offline operational paradigm. User configuration, settings, salary logic, and attendance records are securely preserved in standard local SQLite databases (`app.db`) stored within the user's localized AppData directory under `LocalPayroll`. No data is communicated to external internet domains or cloud synchronizers.
