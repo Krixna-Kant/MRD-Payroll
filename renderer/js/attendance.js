@@ -53,28 +53,21 @@ const AttendancePage = (() => {
       </div>
     `;
 
-    document.getElementById('att-mode-bulk')?.addEventListener('click', () => { _mode = 'bulk'; init(); });
-    document.getElementById('att-mode-monthly')?.addEventListener('click', () => { _mode = 'monthly'; init(); });
-
-    if (_mode === 'bulk') await initBulk();
-    else                  await initMonthly();
-  }
-
-  /* ── BULK DAILY MODE ─────────────────────────────────────────────────────── */
+    document.getElementById('att-mode-bulk')?  /* ── BULK DAILY MODE ─────────────────────────────────────────────────────── */
   async function initBulk() {
     const sunday = isSunday(_date);
     container().innerHTML = `
       <div class="toolbar">
-        <div class="toolbar-left">
-          <span class="form-label" style="margin:0">Date:</span>
-          <input id="att-date-picker" type="date" class="form-input" value="${_date}" style="width:160px" />
-          <span class="text-muted text-sm" id="att-day-name">${getDayName(_date)}</span>
-          <span class="text-muted text-sm" id="att-bulk-count"></span>
+        <div class="toolbar-left" style="align-items:center;gap:10px">
+          <button id="att-prev-day" class="btn btn-sm btn-secondary" style="padding:0 8px">◀</button>
+          <input id="att-date-picker" type="date" class="form-input" value="${_date}" style="width:140px;margin:0" />
+          <button id="att-next-day" class="btn btn-sm btn-secondary" style="padding:0 8px">▶</button>
+          <span class="text-muted text-sm ml-2" id="att-day-name">${getDayName(_date)}</span>
+          <span class="text-muted text-sm badge badge-muted" id="att-bulk-count" style="margin-left:8px"></span>
         </div>
         <div class="toolbar-right">
-          <button id="att-save-all" class="btn btn-primary" disabled>
-            <span class="btn-text">Save All</span>
-            <span class="btn-loader" hidden></span>
+          <button id="att-export-excel" class="btn btn-primary">
+            <span class="btn-text">Data Export 📊</span>
           </button>
         </div>
       </div>
@@ -88,7 +81,7 @@ const AttendancePage = (() => {
 
       <!-- Legend -->
       <div class="flex gap-3 mb-4" style="align-items:center">
-        <span class="text-sm text-muted">Click to toggle:</span>
+        <span class="text-sm text-muted">Auto-saves on click:</span>
         <span class="badge badge-success">P = Present</span>
         <span class="badge badge-warning">H = Half Day</span>
         <span class="badge badge-danger">A = Absent</span>
@@ -100,9 +93,30 @@ const AttendancePage = (() => {
 
     document.getElementById('att-date-picker').addEventListener('change', e => {
       _date = e.target.value;
-      initBulk(); // re-render entire bulk section to update Sunday banner
+      initBulk();
     });
-    document.getElementById('att-save-all').addEventListener('click', saveAllBulk);
+    
+    document.getElementById('att-prev-day').addEventListener('click', () => {
+      const d = new Date(_date + 'T00:00:00');
+      d.setDate(d.getDate() - 1);
+      _date = Helpers.todayIso(d);
+      initBulk();
+    });
+
+    document.getElementById('att-next-day').addEventListener('click', () => {
+      const d = new Date(_date + 'T00:00:00');
+      d.setDate(d.getDate() + 1);
+      _date = Helpers.todayIso(d);
+      initBulk();
+    });
+
+    document.getElementById('att-export-excel').addEventListener('click', async () => {
+      Helpers.setLoading('att-export-excel', true);
+      const r = await API.exportDailyAttendanceExcel(_date);
+      Helpers.setLoading('att-export-excel', false);
+      if (r.success) Toast.success('Excel Sheet exported to ' + r.filePath);
+      else if (r.error !== 'Cancelled.') Toast.error(r.error);
+    });
 
     await loadBulk();
   }
@@ -112,34 +126,76 @@ const AttendancePage = (() => {
     if (!listEl) return;
     listEl.innerHTML = `<div class="skeleton" style="height:200px;border-radius:12px"></div>`;
 
+    // Wait for settings to load projects list
+    const settingsRes = await API.getSettings();
+    const settings = settingsRes.success ? settingsRes.settings : {};
+    let projects = [];
+    if (settings.projects_list) {
+      try { projects = JSON.parse(settings.projects_list); }
+      catch { projects = settings.projects_list.split(',').map(p=>p.trim()); }
+    }
+
     const res = await API.getBulkAttendance(_date);
     const records = res.records || [];
     const sunday = isSunday(_date);
 
-    // Update day name
     const dayNameEl = document.getElementById('att-day-name');
     if (dayNameEl) dayNameEl.textContent = getDayName(_date);
-
     document.getElementById('att-bulk-count').textContent = `${records.length} employees`;
-    const saveBtn = document.getElementById('att-save-all');
-    if (saveBtn) saveBtn.disabled = records.length === 0;
 
     if (records.length === 0) {
       listEl.innerHTML = `<div class="empty-state"><h3>No employees for this date</h3><p>No active employees found who had joined by this date.</p></div>`;
       return;
     }
 
-    // Build state map: empId → { status, checkIn, checkOut, overtimeHours, isSundayWork }
+    // Build state map
     const stateMap = {};
     records.forEach(r => {
       stateMap[r.id] = {
-        status:    r.status || null,
-        checkIn:   r.check_in || '09:00',
-        checkOut:  r.check_out || '18:00',
-        overtimeHours: r.overtime_hours || 0,
+        status:        r.status || null,
+        checkIn:       r.check_in || '09:00',
+        checkOut:      r.check_out || '18:00',
+        overtimeHours: parseFloat(r.overtime_hours || 0),
         isSundayWork:  r.is_sunday_work ? true : (sunday && r.status ? true : false),
+        projectName:   r.project_name || '',
       };
     });
+
+    // Helper: auto-save a single row to DB seamlessly
+    async function autoSaveRow(empId) {
+      const st = stateMap[empId];
+      if (!st.status) return; // don't save if unselected
+      await API.markAttendance({
+        employeeId: empId,
+        date: _date,
+        status: st.status,
+        checkIn: st.checkIn,
+        checkOut: st.checkOut,
+        overtimeHours: st.overtimeHours,
+        isSundayWork: st.isSundayWork,
+        projectName: st.projectName
+      });
+      // Briefly highlight row to indicate save
+      const tr = document.getElementById(`att-row-${empId}`);
+      if (tr) {
+        tr.style.background = 'rgba(74,222,128,0.1)';
+        setTimeout(() => tr.style.background = '', 500);
+      }
+    }
+
+    // Recompute Overtime visually
+    function renderOT(empId) {
+      const st = stateMap[empId];
+      const otEl = document.getElementById(`att-ot-${empId}`);
+      if (!otEl) return;
+      otEl.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:4px">
+          <button class="btn btn-sm btn-secondary att-ot-minus" data-id="${empId}" style="padding:2px 6px">-</button>
+          <span style="font-size:0.9rem;width:30px;text-align:center" class="${st.overtimeHours > 0 ? 'text-accent font-600' : 'text-muted'}">${st.overtimeHours}h</span>
+          <button class="btn btn-sm btn-secondary att-ot-plus" data-id="${empId}" style="padding:2px 6px">+</button>
+        </div>
+      `;
+    }
 
     listEl.innerHTML = `
       <div class="card" style="padding:0;overflow:hidden">
@@ -147,54 +203,39 @@ const AttendancePage = (() => {
           <table>
             <thead><tr>
               <th>Employee</th>
-              <th>Role</th>
+              <th>Project</th>
               <th style="text-align:center">Status</th>
               <th style="text-align:center">P</th>
               <th style="text-align:center">A</th>
               <th style="text-align:center">H</th>
               <th style="text-align:center">In Time</th>
               <th style="text-align:center">Out Time</th>
-              <th style="text-align:center">OT (hrs)</th>
+              <th style="text-align:center;min-width:110px">OT (hrs)</th>
               ${sunday ? '<th style="text-align:center">Sun 2×</th>' : ''}
             </tr></thead>
             <tbody id="att-bulk-tbody">
               ${records.map(r => {
                 const st = stateMap[r.id];
-                const ot = calcOvertime(st.checkIn, st.checkOut);
-                st.overtimeHours = ot;
                 return `
                 <tr id="att-row-${r.id}" class="${sunday ? 'sunday-row' : ''}">
                   <td>
                     <span class="font-600">${Helpers.escapeHtml(r.name)}</span>
-                    ${r.joining_date ? `<div class="text-xs text-muted">Joined: ${Helpers.formatDate(r.joining_date)}</div>` : ''}
+                    ${r.joining_date ? `<div class="text-xs text-muted">Join: ${Helpers.formatDateShort(r.joining_date)}</div>` : ''}
                   </td>
-                  <td class="td-muted">${Helpers.escapeHtml(r.role || '—')}</td>
-                  <td style="text-align:center" id="status-badge-${r.id}">
-                    ${statusBadge(st.status)}
+                  <td>
+                    <select class="form-select att-project-sel" data-id="${r.id}" style="padding:4px;font-size:0.85rem">
+                      <option value="">-- None --</option>
+                      ${projects.map(p => `<option value="${Helpers.escapeHtml(p)}" ${st.projectName === p ? 'selected' : ''}>${Helpers.escapeHtml(p)}</option>`).join('')}
+                    </select>
                   </td>
-                  <td style="text-align:center">
-                    <button class="att-btn att-quick-btn ${st.status === 'P' ? 'P' : ''}" data-id="${r.id}" data-status="P">P</button>
-                  </td>
-                  <td style="text-align:center">
-                    <button class="att-btn att-quick-btn ${st.status === 'A' ? 'A' : ''}" data-id="${r.id}" data-status="A">A</button>
-                  </td>
-                  <td style="text-align:center">
-                    <button class="att-btn att-quick-btn ${st.status === 'H' ? 'H' : ''}" data-id="${r.id}" data-status="H">H</button>
-                  </td>
-                  <td style="text-align:center">
-                    <input type="time" class="form-input att-time-input" id="att-in-${r.id}" value="${st.checkIn}" data-id="${r.id}" data-type="in" />
-                  </td>
-                  <td style="text-align:center">
-                    <input type="time" class="form-input att-time-input" id="att-out-${r.id}" value="${st.checkOut}" data-id="${r.id}" data-type="out" />
-                  </td>
-                  <td style="text-align:center" id="att-ot-${r.id}">
-                    ${ot > 0 ? `<span class="badge badge-accent">${ot}h</span>` : '<span class="text-muted">—</span>'}
-                  </td>
-                  ${sunday ? `
-                    <td style="text-align:center">
-                      <input type="checkbox" class="att-sunday-check" data-id="${r.id}" ${st.isSundayWork ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--warning)" />
-                    </td>
-                  ` : ''}
+                  <td style="text-align:center" id="status-badge-${r.id}">${statusBadge(st.status)}</td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'P' ? 'P' : ''}" data-id="${r.id}" data-status="P">P</button></td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'A' ? 'A' : ''}" data-id="${r.id}" data-status="A">A</button></td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'H' ? 'H' : ''}" data-id="${r.id}" data-status="H">H</button></td>
+                  <td style="text-align:center"><input type="time" class="form-input att-time-input" style="padding:4px;font-size:0.85rem" id="att-in-${r.id}" value="${st.checkIn}" data-id="${r.id}" data-type="in" /></td>
+                  <td style="text-align:center"><input type="time" class="form-input att-time-input" style="padding:4px;font-size:0.85rem" id="att-out-${r.id}" value="${st.checkOut}" data-id="${r.id}" data-type="out" /></td>
+                  <td style="text-align:center" id="att-ot-${r.id}"></td>
+                  ${sunday ? `<td style="text-align:center"><input type="checkbox" class="att-sunday-check" data-id="${r.id}" ${st.isSundayWork ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--warning)" /></td>` : ''}
                 </tr>
               `}).join('')}
             </tbody>
@@ -202,66 +243,98 @@ const AttendancePage = (() => {
         </div>
       </div>
       <!-- Mark All -->
-      <div class="flex gap-2 mt-4">
-        <span class="text-sm text-muted" style="align-self:center">Mark all as:</span>
+      <div class="flex gap-2 mt-4" style="align-items:center">
+        <span class="text-sm text-muted">Mark all as:</span>
         <button class="btn btn-sm btn-secondary att-mark-all" data-status="P">✓ All Present</button>
         <button class="btn btn-sm btn-secondary att-mark-all" data-status="A">✕ All Absent</button>
       </div>
     `;
 
-    // Time input change → recalculate OT
-    listEl.querySelectorAll('.att-time-input').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const empId = parseInt(inp.dataset.id);
-        const st = stateMap[empId];
-        if (inp.dataset.type === 'in')  st.checkIn  = inp.value;
-        if (inp.dataset.type === 'out') st.checkOut = inp.value;
-        const ot = calcOvertime(st.checkIn, st.checkOut);
-        st.overtimeHours = ot;
-        document.getElementById(`att-ot-${empId}`).innerHTML =
-          ot > 0 ? `<span class="badge badge-accent">${ot}h</span>` : '<span class="text-muted">—</span>';
-      });
-    });
+    // Initialize OT UI
+    records.forEach(r => renderOT(r.id));
 
-    // Sunday checkbox
-    listEl.querySelectorAll('.att-sunday-check').forEach(chk => {
-      chk.addEventListener('change', () => {
-        stateMap[parseInt(chk.dataset.id)].isSundayWork = chk.checked;
-      });
-    });
-
-    // Individual status buttons
-    listEl.querySelectorAll('.att-quick-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+    // DOM Binding
+    listEl.addEventListener('click', async e => {
+      // P/A/H Buttons
+      if (e.target.closest('.att-quick-btn')) {
+        const btn = e.target.closest('.att-quick-btn');
         const empId = parseInt(btn.dataset.id);
         const newStatus = stateMap[empId].status === btn.dataset.status ? null : btn.dataset.status;
         stateMap[empId].status = newStatus;
-        // Update all 3 buttons for this row
+
         listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
           b.className = `att-btn att-quick-btn${b.dataset.status === newStatus ? ' ' + newStatus : ''}`;
         });
-        // Update badge
         document.getElementById(`status-badge-${empId}`).innerHTML = statusBadge(newStatus);
-      });
-    });
-
-    // Mark all
-    listEl.querySelectorAll('.att-mark-all').forEach(btn => {
-      btn.addEventListener('click', () => {
+        
+        await autoSaveRow(empId);
+      }
+      
+      // OT Adjustments
+      if (e.target.closest('.att-ot-minus')) {
+        const empId = parseInt(e.target.closest('.att-ot-minus').dataset.id);
+        stateMap[empId].overtimeHours = Math.max(0, stateMap[empId].overtimeHours - 0.5);
+        renderOT(empId);
+        await autoSaveRow(empId);
+      }
+      if (e.target.closest('.att-ot-plus')) {
+        const empId = parseInt(e.target.closest('.att-ot-plus').dataset.id);
+        stateMap[empId].overtimeHours += 0.5;
+        renderOT(empId);
+        await autoSaveRow(empId);
+      }
+      
+      // Mark All
+      if (e.target.closest('.att-mark-all')) {
+        const btn = e.target.closest('.att-mark-all');
         const s = btn.dataset.status;
-        records.forEach(r => { stateMap[r.id].status = s; });
-        listEl.querySelectorAll('.att-quick-btn').forEach(b => {
-          b.className = `att-btn att-quick-btn${b.dataset.status === s ? ' ' + s : ''}`;
-        });
-        records.forEach(r => {
+        btn.innerHTML = `<span class="btn-loader" style="width:14px;height:14px"></span> Saving...`;
+        btn.disabled = true;
+
+        for (const r of records) {
+          stateMap[r.id].status = s;
+          listEl.querySelectorAll(`.att-quick-btn[data-id="${r.id}"]`).forEach(b => {
+            b.className = `att-btn att-quick-btn${b.dataset.status === s ? ' ' + s : ''}`;
+          });
           document.getElementById(`status-badge-${r.id}`).innerHTML = statusBadge(s);
-        });
-      });
+          await autoSaveRow(r.id);
+        }
+        
+        btn.innerHTML = s === 'P' ? '✓ All Present' : '✕ All Absent';
+        btn.disabled = false;
+        Toast.success('Saved all attendance globally.');
+      }
     });
 
-    // Store stateMap for save
-    listEl._stateMap = stateMap;
-    listEl._records  = records;
+    listEl.addEventListener('change', async e => {
+      // Time changes
+      if (e.target.classList.contains('att-time-input')) {
+        const inp = e.target;
+        const empId = parseInt(inp.dataset.id);
+        if (inp.dataset.type === 'in') stateMap[empId].checkIn = inp.value;
+        if (inp.dataset.type === 'out') stateMap[empId].checkOut = inp.value;
+        // Check rule: Auto calculate OT, and if it's less than 1 hour it counts as 0
+        let ot = calcOvertime(stateMap[empId].checkIn, stateMap[empId].checkOut);
+        if (ot < 1) ot = 0;
+        stateMap[empId].overtimeHours = ot;
+        renderOT(empId);
+        await autoSaveRow(empId);
+      }
+      
+      // Project changing
+      if (e.target.classList.contains('att-project-sel')) {
+        const empId = parseInt(e.target.dataset.id);
+        stateMap[empId].projectName = e.target.value;
+        await autoSaveRow(empId);
+      }
+
+      // Sunday boolean
+      if (e.target.classList.contains('att-sunday-check')) {
+        const empId = parseInt(e.target.dataset.id);
+        stateMap[empId].isSundayWork = e.target.checked;
+        await autoSaveRow(empId);
+      }
+    });
   }
 
   function statusBadge(status) {
@@ -269,41 +342,6 @@ const AttendancePage = (() => {
     const map = { P: 'badge-success', A: 'badge-danger', H: 'badge-warning' };
     const labels = { P: 'Present', A: 'Absent', H: 'Half Day' };
     return `<span class="badge ${map[status]}">${labels[status]}</span>`;
-  }
-
-  async function saveAllBulk() {
-    const listEl = document.getElementById('att-bulk-list');
-    const stateMap = listEl._stateMap;
-    const records  = listEl._records;
-    const userId   = AppState.get('user')?.id;
-    const sunday   = isSunday(_date);
-
-    if (!stateMap || !records) return;
-
-    Helpers.setLoading('att-save-all', true);
-
-    // Only save entries that have a status
-    const toSave = records.filter(r => stateMap[r.id].status);
-    let errors = 0;
-    for (const r of toSave) {
-      const st = stateMap[r.id];
-      const res = await API.markAttendance({
-        employeeId:    r.id,
-        date:          _date,
-        status:        st.status,
-        markedBy:      userId,
-        checkIn:       st.checkIn || null,
-        checkOut:      st.checkOut || null,
-        overtimeHours: st.overtimeHours || 0,
-        isSundayWork:  sunday && st.isSundayWork ? 1 : 0,
-      });
-      if (!res.success) errors++;
-    }
-
-    Helpers.setLoading('att-save-all', false);
-    if (errors > 0) Toast.error(`${errors} records failed to save.`);
-    else Toast.success(`Attendance saved for ${toSave.length} employees!`);
-    EventBus.emit('data:refresh');
   }
 
   /* ── MONTHLY VIEW MODE ───────────────────────────────────────────────────── */

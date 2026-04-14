@@ -8,13 +8,21 @@ const { getDB } = require('../database/db');
 
 module.exports = function registerAttendanceHandlers(ipcMain) {
 
-  // ── Mark / Update Single Attendance Record ────────────────────────────────
-  // Uses INSERT OR REPLACE for upsert behavior (idempotent marking).
-  ipcMain.handle('attendance:mark', async (_, { employeeId, date, status, notes, markedBy, checkIn, checkOut, overtimeHours, isSundayWork }) => {
+  // ── Mark Attendance (upsert) ──────────────────────────────────────────────
+  ipcMain.handle('attendance:mark', async (_, data) => {
+    const { employeeId, date, status, notes, markedBy, checkIn, checkOut, isSundayWork, projectName } = data;
+    let { overtimeHours } = data;
+    
+    // Only calculate overtime if it's strictly >= 1 hour
+    overtimeHours = overtimeHours || 0;
+    if (overtimeHours < 1) {
+      overtimeHours = 0;
+    }
+
     const db = getDB();
     db.prepare(`
-      INSERT INTO attendance (employee_id, date, status, notes, marked_by, check_in, check_out, overtime_hours, is_sunday_work)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO attendance (employee_id, date, status, notes, marked_by, check_in, check_out, overtime_hours, is_sunday_work, project_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(employee_id, date) DO UPDATE SET
         status         = excluded.status,
         notes          = excluded.notes,
@@ -22,10 +30,11 @@ module.exports = function registerAttendanceHandlers(ipcMain) {
         check_in       = excluded.check_in,
         check_out      = excluded.check_out,
         overtime_hours = excluded.overtime_hours,
-        is_sunday_work = excluded.is_sunday_work
+        is_sunday_work = excluded.is_sunday_work,
+        project_name   = excluded.project_name
     `).run(
       employeeId, date, status, notes || null, markedBy || null,
-      checkIn || null, checkOut || null, overtimeHours || 0, isSundayWork ? 1 : 0
+      checkIn || null, checkOut || null, overtimeHours, isSundayWork ? 1 : 0, projectName || null
     );
     return { success: true };
   });
@@ -63,7 +72,7 @@ module.exports = function registerAttendanceHandlers(ipcMain) {
     const rows = db.prepare(`
       SELECT e.id, e.name, e.phone, e.role, e.joining_date,
              a.status, a.notes, a.id as attendance_id,
-             a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work
+             a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
       WHERE e.status = 'active'
