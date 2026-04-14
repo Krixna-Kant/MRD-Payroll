@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+npm-debug.log*
+
+# Electron builder output
+release/
+
+# Local DB (don't commit user data)
+*.db
+*.db-shm
+*.db-wal

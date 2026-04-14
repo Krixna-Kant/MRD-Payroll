@@ -1,0 +1,157 @@
+/**
+ * LocalPayroll - Reports IPC Handlers
+ * Dashboard stats, PDF payslips, monthly reports, Excel exports.
+ */
+
+const { getDB } = require('../database/db');
+const { generatePayslipPdf, generateMonthlyReportPdf } = require('../utils/pdf');
+const { generateMonthlyExcel, generateEmployeeExcel } = require('../utils/excel');
+const { dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+module.exports = function registerReportHandlers(ipcMain) {
+
+  // ── Dashboard Statistics ───────────────────────────────────────────────────
+  ipcMain.handle('reports:dashboard', async () => {
+    const db = getDB();
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year  = now.getFullYear();
+
+    const totalEmployees = db.prepare(`SELECT COUNT(*) as n FROM employees WHERE status = 'active'`).get().n;
+    const totalPayroll   = db.prepare(`SELECT COALESCE(SUM(salary), 0) as total FROM employees WHERE status = 'active'`).get().total;
+    const thisMonthAdvances = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) as total FROM advances WHERE month = ? AND year = ?
+    `).get(month, year).total;
+
+    // Pending = active employees who don't have a 'paid' payment this month
+    const paidThisMonth = db.prepare(`
+      SELECT COUNT(*) as n FROM payments WHERE month = ? AND year = ? AND status = 'paid'
+    `).get(month, year).n;
+    const pendingCount = totalEmployees - paidThisMonth;
+
+    // Recent 5 payments
+    const recentPayments = db.prepare(`
+      SELECT p.*, e.name as employee_name
+      FROM payments p JOIN employees e ON e.id = p.employee_id
+      ORDER BY p.created_at DESC LIMIT 5
+    `).all();
+
+    // Recent 5 advances
+    const recentAdvances = db.prepare(`
+      SELECT a.*, e.name as employee_name
+      FROM advances a JOIN employees e ON e.id = a.employee_id
+      ORDER BY a.created_at DESC LIMIT 5
+    `).all();
+
+    return {
+      success: true,
+      stats: {
+        totalEmployees,
+        totalPayroll,        // paisa
+        thisMonthAdvances,   // paisa
+        pendingCount,
+        paidThisMonth,
+        currentMonth: month,
+        currentYear: year,
+        recentPayments,
+        recentAdvances,
+      }
+    };
+  });
+
+  // ── Generate Payslip PDF ───────────────────────────────────────────────────
+  ipcMain.handle('reports:payslipPdf', async (event, paymentId) => {
+    const db = getDB();
+    const payment = db.prepare(`
+      SELECT p.*, e.name as employee_name, e.phone as employee_phone,
+             e.role as employee_role, e.joining_date
+      FROM payments p JOIN employees e ON e.id = p.employee_id
+      WHERE p.id = ?
+    `).get(paymentId);
+
+    if (!payment) return { success: false, error: 'Payment not found.' };
+
+    const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'My Company';
+
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Payslip',
+      defaultPath: `Payslip_${payment.employee_name}_${payment.month}_${payment.year}.pdf`,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generatePayslipPdf(payment, companyName, filePath);
+    return { success: true, filePath };
+  });
+
+  // ── Generate Monthly Report PDF ────────────────────────────────────────────
+  ipcMain.handle('reports:monthlyPdf', async (event, month, year) => {
+    const db = getDB();
+    const payments = db.prepare(`
+      SELECT p.*, e.name as employee_name, e.role as employee_role
+      FROM payments p JOIN employees e ON e.id = p.employee_id
+      WHERE p.month = ? AND p.year = ?
+      ORDER BY e.name ASC
+    `).all(month, year);
+
+    const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'My Company';
+
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Monthly Report',
+      defaultPath: `Monthly_Report_${month}_${year}.pdf`,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generateMonthlyReportPdf(payments, month, year, companyName, filePath);
+    return { success: true, filePath };
+  });
+
+  // ── Generate Monthly Excel ─────────────────────────────────────────────────
+  ipcMain.handle('reports:monthlyExcel', async (event, month, year) => {
+    const db = getDB();
+    const data = db.prepare(`
+      SELECT p.*, e.name as employee_name, e.phone as employee_phone, e.role as employee_role
+      FROM payments p JOIN employees e ON e.id = p.employee_id
+      WHERE p.month = ? AND p.year = ?
+      ORDER BY e.name ASC
+    `).all(month, year);
+
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Monthly Excel',
+      defaultPath: `Monthly_Report_${month}_${year}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generateMonthlyExcel(data, month, year, filePath);
+    return { success: true, filePath };
+  });
+
+  // ── Generate Employee Detail Excel ─────────────────────────────────────────
+  ipcMain.handle('reports:employeeExcel', async (event, empId) => {
+    const db = getDB();
+    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
+    if (!employee) return { success: false, error: 'Employee not found.' };
+
+    const payments  = db.prepare(`SELECT * FROM payments  WHERE employee_id = ? ORDER BY year DESC, month DESC`).all(empId);
+    const advances  = db.prepare(`SELECT * FROM advances  WHERE employee_id = ? ORDER BY date DESC`).all(empId);
+
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Employee Report',
+      defaultPath: `Employee_${employee.name.replace(/\s+/g, '_')}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generateEmployeeExcel(employee, payments, advances, filePath);
+    return { success: true, filePath };
+  });
+
+};
