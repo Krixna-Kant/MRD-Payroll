@@ -45,6 +45,31 @@ module.exports = function registerReportHandlers(ipcMain) {
       ORDER BY a.created_at DESC LIMIT 5
     `).all();
 
+    // Today's Attendance snapshot
+    const today = now.toISOString().split('T')[0]; // local today in YYYY-MM-DD (rough logic, safe enough)
+    const todayAtt = db.prepare(`
+      SELECT a.status, a.project_name, e.name
+      FROM attendance a JOIN employees e ON e.id = a.employee_id
+      WHERE a.date = ?
+    `).all(today);
+
+    // Grouping for today
+    const presentTodayList = [];
+    const absentTodayList = [];
+    const projectSums = {};
+
+    todayAtt.forEach(r => {
+      if (r.status === 'P' || r.status === 'H') {
+        presentTodayList.push(r.name);
+      } else if (r.status === 'A') {
+        absentTodayList.push(r.name);
+      }
+
+      if (r.project_name) {
+        projectSums[r.project_name] = (projectSums[r.project_name] || 0) + 1;
+      }
+    });
+
     return {
       success: true,
       stats: {
@@ -57,6 +82,11 @@ module.exports = function registerReportHandlers(ipcMain) {
         currentYear: year,
         recentPayments,
         recentAdvances,
+        todayAttendance: {
+          presentNames: presentTodayList,
+          absentNames: absentTodayList,
+          projectSums: projectSums
+        }
       }
     };
   });
@@ -151,6 +181,33 @@ module.exports = function registerReportHandlers(ipcMain) {
     if (!filePath) return { success: false, error: 'Cancelled.' };
 
     await generateEmployeeExcel(employee, payments, advances, filePath);
+    return { success: true, filePath };
+  });
+
+  // ── Generate Daily Attendance Excel ────────────────────────────────────────
+  ipcMain.handle('reports:dailyAttendanceExcel', async (event, date) => {
+    const db = getDB();
+    const records = db.prepare(`
+      SELECT e.id, e.name, e.role, e.joining_date,
+             a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+      FROM employees e
+      LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
+      WHERE e.status = 'active'
+        AND (e.joining_date IS NULL OR e.joining_date <= ?)
+      ORDER BY e.name ASC
+    `).all(date, date);
+
+    if (!records || records.length === 0) return { success: false, error: 'No active employees to export.' };
+
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Daily Attendance',
+      defaultPath: `Attendance_${date}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generateDailyAttendanceExcel(records, date, filePath);
     return { success: true, filePath };
   });
 

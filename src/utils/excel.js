@@ -193,4 +193,61 @@ async function generateEmployeeExcel(employee, payments, advances, outputPath) {
   await wb.xlsx.writeFile(outputPath);
 }
 
-module.exports = { generateMonthlyExcel, generateEmployeeExcel };
+// ── Daily Attendance Excel ───────────────────────────────────────────────
+async function generateDailyAttendanceExcel(records, date, outputPath) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LocalPayroll';
+
+  const ws = wb.addWorksheet(`Attendance ${date}`);
+
+  ws.mergeCells('A1:I1');
+  const t1 = ws.getCell('A1');
+  t1.value = `Daily Attendance Report — ${date}`;
+  t1.font  = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  t1.fill  = fillColor('#6366f1');
+  t1.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  const ph = ws.addRow(['#', 'Employee Name', 'Role', 'Project', 'Status', 'In Time', 'Out Time', 'OT (hrs)', 'Sunday?']);
+  ph.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill  = fillColor('#1e1e2e');
+    c.alignment = { horizontal: 'center' };
+  });
+
+  ws.columns = [
+    { width: 6 }, { width: 22 }, { width: 14 }, { width: 14 }, 
+    { width: 10 }, { width: 12 }, { width: 12 }, { width: 10 }, { width: 10 }
+  ];
+
+  records.forEach((r, i) => {
+    const row = ws.addRow([
+      i + 1,
+      r.name,
+      r.role || '-',
+      r.project_name || '-',
+      r.status || '-',
+      r.check_in || '-',
+      r.check_out || '-',
+      r.overtime_hours || 0,
+      r.is_sunday_work ? 'Yes' : 'No'
+    ]);
+    if (i % 2 === 0) row.eachCell(c => { c.fill = fillColor('#f9fafb'); });
+
+    const sc = row.getCell(5);
+    if(r.status === 'P') sc.fill = fillColor('#10b981'); // success
+    else if(r.status === 'A') sc.fill = fillColor('#ef4444'); // danger
+    else if(r.status === 'H') sc.fill = fillColor('#f59e0b'); // warning
+
+    sc.font = { bold: true, color: { argb: r.status ? 'FFFFFFFF' : 'FF000000' } };
+    sc.alignment = { horizontal: 'center' };
+    row.getCell(6).alignment = { horizontal: 'center' };
+    row.getCell(7).alignment = { horizontal: 'center' };
+    row.getCell(8).alignment = { horizontal: 'center' };
+    row.getCell(9).alignment = { horizontal: 'center' };
+  });
+
+  await wb.xlsx.writeFile(outputPath);
+}
+
+module.exports = { generateMonthlyExcel, generateEmployeeExcel, generateDailyAttendanceExcel };

@@ -51,8 +51,63 @@ const DashboardPage = (() => {
         ${statCard('Pending Payouts', s.pendingCount, 'danger', '⏳', `Not yet paid this month`, 'nav-to-payments')}
       </div>
 
-      <!-- Quick Actions + Activity -->
-      <div class="grid-2" style="margin-bottom:24px">
+      <!-- Top Insights -->
+      <div class="grid-3" style="margin-bottom:24px">
+        
+        <!-- Today's Attendance -->
+        <div class="card">
+          <div class="card-title">Today's Attendance Summary</div>
+          <div style="font-size: 0.85rem; margin-bottom:12px">
+            <div class="mb-2">
+              <strong class="text-success">Present (${s.todayAttendance.presentNames.length}):</strong> 
+              <span class="text-muted">${s.todayAttendance.presentNames.join(', ') || 'None'}</span>
+            </div>
+            <div>
+              <strong class="text-danger">Absent (${s.todayAttendance.absentNames.length}):</strong> 
+              <span class="text-muted">${s.todayAttendance.absentNames.join(', ') || 'None'}</span>
+            </div>
+          </div>
+          <div style="margin-top:16px;margin-bottom:8px;font-size:0.9rem;font-weight:600;color:var(--text)">Project Breakdown</div>
+          <div style="max-height:100px;overflow-y:auto">
+            ${Object.keys(s.todayAttendance.projectSums).length === 0 
+                ? '<span class="text-muted text-sm">No projects assigned today</span>' 
+                : Object.entries(s.todayAttendance.projectSums).map(([proj, count]) => `
+                  <div class="calc-row text-sm" style="padding:4px 0">
+                    <span>${Helpers.escapeHtml(proj)}</span>
+                    <span class="badge badge-accent">${count} Staff</span>
+                  </div>
+                `).join('')
+            }
+          </div>
+        </div>
+
+        <!-- Month Overview -->
+        <div class="card">
+          <div class="card-title">${Helpers.monthName(s.currentMonth)} ${s.currentYear} — Financials</div>
+          <div>
+            <div class="calc-row">
+              <span>Total Employees</span>
+              <span class="font-600">${s.totalEmployees}</span>
+            </div>
+            <div class="calc-row">
+              <span>Already Paid</span>
+              <span class="badge badge-success">${s.paidThisMonth}</span>
+            </div>
+            <div class="calc-row">
+              <span>Pending Payouts</span>
+              <span class="badge badge-warning">${s.pendingCount}</span>
+            </div>
+            <div class="calc-row mt-2" style="border-top:1px solid var(--border);padding-top:8px">
+              <span>Total Payroll</span>
+              <span class="amount amount-success">${API.fmtRupees(s.totalPayroll)}</span>
+            </div>
+            <div class="calc-row">
+              <span>Advances This Month</span>
+              <span class="amount amount-warning">${API.fmtRupees(s.thisMonthAdvances)}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Quick Actions -->
         <div class="card">
           <div class="card-title">Quick Actions</div>
@@ -72,32 +127,6 @@ const DashboardPage = (() => {
           </div>
         </div>
 
-        <!-- Month Overview -->
-        <div class="card">
-          <div class="card-title">${Helpers.monthName(s.currentMonth)} ${s.currentYear} — Overview</div>
-          <div>
-            <div class="calc-row">
-              <span>Total Employees</span>
-              <span class="font-600">${s.totalEmployees}</span>
-            </div>
-            <div class="calc-row">
-              <span>Already Paid</span>
-              <span class="badge badge-success">${s.paidThisMonth}</span>
-            </div>
-            <div class="calc-row">
-              <span>Pending</span>
-              <span class="badge badge-warning">${s.pendingCount}</span>
-            </div>
-            <div class="calc-row">
-              <span>Total Payroll</span>
-              <span class="amount amount-success">${API.fmtRupees(s.totalPayroll)}</span>
-            </div>
-            <div class="calc-row">
-              <span>Advances This Month</span>
-              <span class="amount amount-warning">${API.fmtRupees(s.thisMonthAdvances)}</span>
-            </div>
-          </div>
-        </div>
       </div>
 
       <!-- Recent Activity -->
