@@ -17,7 +17,6 @@ const SettingsPage = (() => {
     container().innerHTML = `
       <div class="grid-2">
 
-        <!-- App Configuration -->
         <div class="card" style="grid-column: 1 / -1">
           <div class="card-title">App Configuration</div>
           <div class="form-row">
@@ -38,6 +37,11 @@ const SettingsPage = (() => {
               <span class="badge badge-muted">Optional</span>
             </label>
             <span class="text-xs text-muted">When ON: salary = (present days / working days) × monthly salary.<br>When OFF: full salary is always payable (advances still deducted).</span>
+          </div>
+          <div class="form-group mt-3">
+            <label class="form-label">Active Projects List</label>
+            <input id="set-projects" class="form-input" placeholder="e.g. Office, Site A, Site B" />
+            <span class="text-xs text-muted mt-3">Comma-separated list of projects available for attendance tagging.</span>
           </div>
           <div class="mt-4">
             <button id="set-save-config" class="btn btn-primary">
@@ -94,7 +98,7 @@ const SettingsPage = (() => {
       <div class="card mt-4" style="text-align:center;padding:24px">
         <div style="font-size:2rem;margin-bottom:8px">₹</div>
         <div style="font-size:1.1rem;font-weight:700;margin-bottom:4px">LocalPayroll</div>
-        <div class="text-muted text-sm">v1.0.0 · Offline-first payroll for small businesses</div>
+        <div class="text-muted text-sm">v1.1.0 · Offline-first payroll for small businesses</div>
         <div class="text-muted text-sm mt-3">Data stored locally at: <code>%APPDATA%/LocalPayroll/payroll.db</code></div>
       </div>
     `;
@@ -106,16 +110,22 @@ const SettingsPage = (() => {
   }
 
   async function loadSettings() {
-    // We'll use a quick hack: the settings are read from the DB via a dedicated call
-    // For now, read from the settings table via the dashboard stats endpoint pattern
-    // (In a real app, add a dedicated getSettings IPC — here we use defaults)
-    try {
-      // Try to get saved values (stored in DB by save call below)
-      const stored = JSON.parse(localStorage.getItem('lp_settings') || '{}');
-      if (stored.companyName)     document.getElementById('set-company').value = stored.companyName;
-      if (stored.workingDays)     document.getElementById('set-working-days').value = stored.workingDays;
-      if (stored.useAttendance)   document.getElementById('set-att-toggle').checked = stored.useAttendance === '1';
-    } catch {}
+    const res = await API.getSettings();
+    if (!res.success) return;
+    const s = res.settings;
+
+    if (s.company_name)   document.getElementById('set-company').value = s.company_name;
+    if (s.working_days)   document.getElementById('set-working-days').value = s.working_days;
+    if (s.use_attendance) document.getElementById('set-att-toggle').checked = s.use_attendance === '1';
+    
+    if (s.projects_list) {
+      try {
+        const pArr = JSON.parse(s.projects_list);
+        document.getElementById('set-projects').value = pArr.join(', ');
+      } catch (e) {
+        document.getElementById('set-projects').value = s.projects_list;
+      }
+    }
   }
 
   async function loadUsers() {
@@ -156,14 +166,22 @@ const SettingsPage = (() => {
   function bindSettingsEvents(isAdmin, currentUser) {
     // Save config
     document.getElementById('set-save-config').addEventListener('click', async () => {
-      const companyName  = document.getElementById('set-company').value.trim();
-      const workingDays  = document.getElementById('set-working-days').value;
-      const useAttendance= document.getElementById('set-att-toggle').checked ? '1' : '0';
+      const company_name  = document.getElementById('set-company').value.trim();
+      const working_days  = document.getElementById('set-working-days').value;
+      const use_attendance= document.getElementById('set-att-toggle').checked ? '1' : '0';
+      const projStr       = document.getElementById('set-projects').value.trim();
+      const projectsArr   = projStr.split(',').map(s => s.trim()).filter(Boolean);
+      const projects_list = JSON.stringify(projectsArr);
 
-      // Persist locally (in a proper implementation, these would go through IPC to settings table)
-      localStorage.setItem('lp_settings', JSON.stringify({ companyName, workingDays, useAttendance }));
+      Helpers.setLoading('set-save-config', true);
+      const res = await API.saveSettings({ company_name, working_days, use_attendance, projects_list });
+      Helpers.setLoading('set-save-config', false);
 
-      Toast.success('Settings saved!');
+      if (res.success) {
+        Toast.success('Settings saved successfully!');
+      } else {
+        Toast.error('Failed to save settings: ' + res.error);
+      }
     });
 
     // Change password

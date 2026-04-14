@@ -50,6 +50,7 @@ function registerIpcHandlers() {
   require('./src/ipc/advances')(ipcMain);
   require('./src/ipc/payments')(ipcMain);
   require('./src/ipc/reports')(ipcMain);
+  require('./src/ipc/settings')(ipcMain);
   require('./src/ipc/backup')(ipcMain, () => mainWindow, dialog);
 }
 

@@ -118,7 +118,7 @@ function runMigrations() {
     );
   `);
 
-  // ── Migration: Add attendance time tracking columns ───────────────────────
+  // ── Migration: Add attendance time/project tracking columns ───────────────
   // Safe column additions — only add if they don't exist
   const attCols = db.prepare(`PRAGMA table_info(attendance)`).all().map(c => c.name);
   if (!attCols.includes('check_in')) {
@@ -137,6 +137,18 @@ function runMigrations() {
     db.exec(`ALTER TABLE attendance ADD COLUMN is_sunday_work INTEGER DEFAULT 0`);
     console.log('[DB] Added attendance.is_sunday_work column');
   }
+  if (!attCols.includes('project_name')) {
+    db.exec(`ALTER TABLE attendance ADD COLUMN project_name TEXT`);
+    console.log('[DB] Added attendance.project_name column');
+  }
+
+  // ── Migration: Seed default settings ───────────────────────────────────────
+  const initSetting = (k, v) => db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run(k, v);
+  initSetting('company_name', 'My Payroll Co.');
+  initSetting('office_start_time', '09:00');
+  initSetting('office_end_time', '18:00');
+  initSetting('sunday_pay_multiplier', '2.0');
+  initSetting('projects_list', JSON.stringify(['Head Office', 'Site A', 'Site B']));
 
   // ── Seed default admin user if no users exist ────────────────────────────
   const userCount = db.prepare('SELECT COUNT(*) as n FROM users').get().n;
