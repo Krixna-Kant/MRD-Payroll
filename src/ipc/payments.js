@@ -9,15 +9,8 @@ const { getDB } = require('../database/db');
 
 module.exports = function registerPaymentHandlers(ipcMain) {
 
-  // ── Calculate Salary (preview before recording) ───────────────────────────
-  // Returns a salary breakdown for an employee for a given month/year.
-  ipcMain.handle('payments:calculate', async (_, empId, month, year) => {
-    const db = getDB();
-
-    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
-    if (!employee) return { success: false, error: 'Employee not found.' };
-
-    // Get app settings
+  // ── INTERNAL HELPER: Calculate single salary ──────────────────────────────
+  function calculateSalaryCore(db, empId, employee, month, year) {
     const workingDaysSetting = db.prepare(`SELECT value FROM settings WHERE key = 'working_days_per_month'`).get();
     const useAttendanceSetting = db.prepare(`SELECT value FROM settings WHERE key = 'use_attendance_for_salary'`).get();
     const sundayMultiplierSetting = db.prepare(`SELECT value FROM settings WHERE key = 'sunday_pay_multiplier'`).get();
@@ -25,104 +18,81 @@ module.exports = function registerPaymentHandlers(ipcMain) {
     const useAttendance = parseInt(useAttendanceSetting?.value || '0', 10) === 1;
     const sundayMultiplier = parseFloat(sundayMultiplierSetting?.value || '2');
 
-    // Attendance summary for month (respecting joining date)
     const monthStr = String(month).padStart(2, '0');
     const start = `${year}-${monthStr}-01`;
     const end   = `${year}-${monthStr}-31`;
 
-    // Determine effective start (max of month start and joining date)
     const joiningDate = employee.joining_date || null;
     const effectiveStart = (joiningDate && joiningDate > start) ? joiningDate : start;
 
-    const attRows = db.prepare(`
-      SELECT status, COUNT(*) as count FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ?
-      GROUP BY status
-    `).all(empId, effectiveStart, end);
-
+    const attRows = db.prepare(`SELECT status, COUNT(*) as count FROM attendance WHERE employee_id = ? AND date >= ? AND date <= ? GROUP BY status`).all(empId, effectiveStart, end);
     const att = { P: 0, A: 0, H: 0 };
     attRows.forEach(r => { att[r.status] = r.count; });
     const effectiveDays = att.P + att.H * 0.5;
 
-    // Gross salary (stored in paisa)
     const grossSalary = employee.salary;
-
-    // Daily rate (paisa)
     const dailyRate = Math.round(grossSalary / totalWorkingDays);
-
-    // Hourly rate (9 hour work day)
     const hourlyRate = Math.round(dailyRate / 9);
+    
+    // Prorate strictly by attendance if useAttendance is true, else full
+    const effectiveSalary = useAttendance ? Math.round(dailyRate * effectiveDays) : grossSalary;
 
-    // Effective salary: always prorated by attendance days
-    // effectiveSalary = dailyRate × effectiveDays
-    const effectiveSalary = Math.round(dailyRate * effectiveDays);
-
-    // ── Overtime calculation ──────────────────────────────────────────────
-    const otRow = db.prepare(`
-      SELECT COALESCE(SUM(overtime_hours), 0) as totalOT
-      FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ? AND status IN ('P', 'H')
-    `).get(empId, effectiveStart, end);
+    const otRow = db.prepare(`SELECT COALESCE(SUM(overtime_hours), 0) as totalOT FROM attendance WHERE employee_id = ? AND date >= ? AND date <= ? AND status IN ('P', 'H')`).get(empId, effectiveStart, end);
     const totalOvertimeHours = otRow.totalOT;
     const overtimePay = Math.round(totalOvertimeHours * hourlyRate);
 
-    // ── Sunday work bonus ─────────────────────────────────────────────────
-    // Sunday workers get (multiplier - 1) × dailyRate extra per Sunday worked
-    // because base day is already counted in effectiveSalary
-    const sunRow = db.prepare(`
-      SELECT COUNT(*) as sundays
-      FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ? AND is_sunday_work = 1 AND status IN ('P', 'H')
-    `).get(empId, effectiveStart, end);
+    const sunRow = db.prepare(`SELECT COUNT(*) as sundays FROM attendance WHERE employee_id = ? AND date >= ? AND date <= ? AND is_sunday_work = 1 AND status IN ('P', 'H')`).get(empId, effectiveStart, end);
     const sundayWorkDays = sunRow.sundays;
     const sundayBonus = Math.round(sundayWorkDays * dailyRate * (sundayMultiplier - 1));
 
-    // Total advances for this month
-    const advRow = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total FROM advances
-      WHERE employee_id = ? AND month = ? AND year = ?
-    `).get(empId, month, year);
+    const advRow = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM advances WHERE employee_id = ? AND month = ? AND year = ?`).get(empId, month, year);
     const advanceTotal = advRow.total;
 
-    // Net = effective + overtime + sunday bonus - advances (floor to 0)
     const totalEarnings = effectiveSalary + overtimePay + sundayBonus;
-    const netPaid = Math.max(0, totalEarnings - advanceTotal);
-    const carryForwardAdvance = Math.max(0, advanceTotal - totalEarnings);
+    const netPayable = Math.max(0, totalEarnings - advanceTotal);
 
-    // Existing payment record for this month (if already paid)
-    const existingPayment = db.prepare(`
-      SELECT * FROM payments WHERE employee_id = ? AND month = ? AND year = ?
-    `).get(empId, month, year);
+    const existingPayment = db.prepare(`SELECT * FROM payments WHERE employee_id = ? AND month = ? AND year = ?`).get(empId, month, year);
 
     return {
-      success: true,
-      calculation: {
-        employeeId:      empId,
-        employeeName:    employee.name,
-        grossSalary,
-        attendanceDays:  effectiveDays,
-        totalDays:       totalWorkingDays,
-        presentDays:     att.P,
-        halfDays:        att.H,
-        absentDays:      att.A,
-        useAttendance,
-        effectiveSalary,
-        // Overtime
-        totalOvertimeHours,
-        hourlyRate,
-        overtimePay,
-        // Sunday
-        sundayWorkDays,
-        sundayMultiplier,
-        sundayBonus,
-        // Deductions
-        advanceDeducted: advanceTotal,
-        otherDeductions: 0,
-        netPaid,
-        carryForwardAdvance, // New field
-        existingPayment: existingPayment || null,
-      }
+      employeeId:      empId,
+      employeeName:    employee.name,
+      employeeRole:    employee.role,
+      grossSalary,
+      attendanceDays:  effectiveDays,
+      totalDays:       totalWorkingDays,
+      presentDays:     att.P,
+      halfDays:        att.H,
+      absentDays:      att.A,
+      useAttendance,
+      effectiveSalary,
+      totalOvertimeHours,
+      hourlyRate,
+      overtimePay,
+      sundayWorkDays,
+      sundayMultiplier,
+      sundayBonus,
+      advanceDeducted: advanceTotal,
+      otherDeductions: existingPayment ? existingPayment.other_deductions : 0,
+      netPayable,
+      totalEarnings,
+      existingPayment: existingPayment || null,
     };
+  }
+
+  // ── Calculate Salary (preview before recording) ───────────────────────────
+  ipcMain.handle('payments:calculate', async (_, empId, month, year) => {
+    const db = getDB();
+    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(empId);
+    if (!employee) return { success: false, error: 'Employee not found.' };
+    return { success: true, calculation: calculateSalaryCore(db, empId, employee, month, year) };
+  });
+
+  // ── Calculate ALL Active Salaries for Month ───────────────────────────────
+  ipcMain.handle('payments:calculateAll', async (_, month, year) => {
+    const db = getDB();
+    const employees = db.prepare('SELECT * FROM employees WHERE status = "active" ORDER BY name ASC').all();
+    const calculations = employees.map(emp => calculateSalaryCore(db, emp.id, emp, month, year));
+    return { success: true, calculations };
   });
 
   // ── Get Payments (filterable) ─────────────────────────────────────────────
@@ -152,8 +122,16 @@ module.exports = function registerPaymentHandlers(ipcMain) {
     const {
       employeeId, month, year, grossSalary, attendanceDays,
       totalDays, useAttendance, effectiveSalary, advanceDeducted,
-      otherDeductions, netPaid, carryForwardAdvance, mode, paymentDate, notes, status, createdBy
+      otherDeductions, totalEarnings, paidAmount, mode, paymentDate, notes, status, createdBy
     } = data;
+
+    // The core math for partial payments and dues
+    // What the company owes the employee before custom payments:
+    const theoreticalNet = (totalEarnings || 0) - (advanceDeducted || 0) - (otherDeductions || 0);
+    // Overpayment/Underpayment carry forward (paidAmount > theoreticalNet => Positive advance)
+    const carryForwardAdvance = (paidAmount || 0) - theoreticalNet;
+    // We treat the "paidAmount" as the literal "net_paid" column 
+    const netPaid = paidAmount || 0;
 
     // Enable transaction for safety since we modify multiple tables
     const transaction = db.transaction(() => {
@@ -193,10 +171,14 @@ module.exports = function registerPaymentHandlers(ipcMain) {
       db.prepare(`
         DELETE FROM advances 
         WHERE employee_id = ? AND month = ? AND year = ? AND notes LIKE ?
-      `).run(employeeId, nextMonth, nextYear, '[SYSTEM] Carry forward%');
+      `).run(employeeId, nextMonth, nextYear, '[SYSTEM]%');
 
       // If there is advance to carry forward, insert it
-      if (carryForwardAdvance && carryForwardAdvance > 0) {
+      if (typeof carryForwardAdvance === 'number' && carryForwardAdvance !== 0) {
+        const customNote = carryForwardAdvance > 0 
+            ? `[SYSTEM] Carry forward advance from ${month}/${year}` 
+            : `[SYSTEM] Pending arrears from ${month}/${year}`;
+
         db.prepare(`
           INSERT INTO advances (employee_id, amount, mode, date, month, year, notes, created_by)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -207,7 +189,7 @@ module.exports = function registerPaymentHandlers(ipcMain) {
           paymentDate || new Date().toISOString().split('T')[0], // Use today's date
           nextMonth,
           nextYear,
-          sysNote,
+          customNote,
           createdBy || null
         );
       }
