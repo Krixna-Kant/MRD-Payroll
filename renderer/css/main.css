@@ -492,6 +492,7 @@ td {
 .badge-warning { background: var(--warning-faint); color: var(--warning); }
 .badge-danger  { background: var(--danger-faint);  color: var(--danger);  }
 .badge-accent  { background: var(--accent-faint);  color: var(--accent);  }
+.badge-info    { background: var(--info-faint);    color: var(--info);    }
 .badge-muted   { background: var(--bg-input);      color: var(--text-muted); }
 
 /* ── Modal ────────────────────────────────────────────────────────────────── */
@@ -610,6 +611,9 @@ td {
 .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 
 /* ── Utility ──────────────────────────────────────────────────────────────── */
+.info-clickable { cursor: pointer; border-bottom: 1px dashed var(--accent); display: inline-block; transition: all 0.2s; }
+.info-clickable:hover { color: var(--accent) !important; opacity: 0.8; transform: translateY(-1px); }
+
 .mt-3 { margin-top: 12px; }
 .mt-4 { margin-top: 16px; }
 .mt-5 { margin-top: 20px; }
@@ -669,7 +673,8 @@ td {
 .att-btn.P              { background: var(--success-faint); color: var(--success); border-color: var(--success); }
 .att-btn.A              { background: var(--danger-faint);  color: var(--danger);  border-color: var(--danger);  }
 .att-btn.H              { background: var(--warning-faint); color: var(--warning); border-color: var(--warning); }
-.att-btn:not(.P):not(.A):not(.H) { background: var(--bg-input); color: var(--text-faint); border-color: var(--border); }
+.att-btn.WO             { background: var(--info-faint);    color: var(--info);    border-color: var(--info);    }
+.att-btn:not(.P):not(.A):not(.H):not(.WO) { background: var(--bg-input); color: var(--text-faint); border-color: var(--border); }
 .att-btn:hover          { filter: brightness(1.15); transform: scale(1.08); }
 
 /* ============================================================================

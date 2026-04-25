@@ -10,7 +10,7 @@ const fs = require('fs');
 /** Convert paisa integer to formatted ₹ string */
 function formatRupees(paisa) {
   const rupees = paisa / 100;
-  return '₹' + rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return 'Rs. ' + rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -71,9 +71,14 @@ async function generatePayslipPdf(payment, companyName, outputPath) {
     drawTableHeader(doc, 50, tableY, W, 'EARNINGS & DEDUCTIONS');
 
     const rows = [
-      ['Gross Monthly Salary',       formatRupees(payment.gross_salary)],
-      ['Attendance (days)',           `${payment.attendance_days} / ${payment.total_days}`],
+      ['Gross Per Day Salary',        formatRupees(payment.gross_salary)],
+      ['Attendance (P / H / WO)',     `${payment.present_days || 0} / ${payment.half_days || 0} / ${payment.wo_days || 0}`],
+      ['Absent (A)',                  `${payment.absent_days || 0} days`],
+      ['Total Effective Days',        `${payment.attendance_days} / ${payment.total_days}`],
       ['Effective Salary',            formatRupees(payment.effective_salary)],
+      ['(+) Overtime Amount',         `${formatRupees(payment.overtime_pay || 0)} (${payment.overtime_hours || 0} hrs)`],
+      ['(+) Food Allowance',          formatRupees(payment.food_allowance || 0)],
+      ['(+) Travel Allowance',        formatRupees(payment.travel_allowance || 0)],
       ['(-) Advance Deducted',       formatRupees(payment.advance_deducted)],
       ['(-) Other Deductions',       formatRupees(payment.other_deductions)],
     ];
@@ -87,20 +92,40 @@ async function generatePayslipPdf(payment, companyName, outputPath) {
       rowY += 22;
     });
 
-    // ── Net Salary Footer ─────────────────────────────────────────────────────
-    const netY = rowY + 10;
-    doc.rect(50, netY, W, 40).fill(C.primary);
-    doc.fillColor(C.white).fontSize(14).font('Helvetica-Bold')
-       .text('NET SALARY PAYABLE', 70, netY + 12)
-       .text(formatRupees(payment.net_paid), 0, netY + 12, { align: 'right' });
+    // Carry forward logic
+    const totalDueWithAllowances = (payment.effective_salary || 0) + (payment.overtime_pay || 0) + (payment.food_allowance || 0) + (payment.travel_allowance || 0) - (payment.advance_deducted || 0) - (payment.other_deductions || 0);
+    const totalPaid = (payment.net_paid || 0);
+    
+    let advanceSlip = Math.max(0, totalPaid - totalDueWithAllowances);
+    let pendingSlip = Math.max(0, totalDueWithAllowances - totalPaid);
+
+    const summaryY = rowY + 15;
+
+    // Box for summary
+    doc.rect(50, summaryY, W, 80).fill('#f8fafc');
+    doc.rect(50, summaryY, W, 80).lineWidth(0.5).stroke(C.lightGray);
+
+    const drawRow = (label, val, yOff, color = C.text, isBold = false) => {
+      doc.fillColor(color).fontSize(10).font(isBold ? 'Helvetica-Bold' : 'Helvetica')
+         .text(label, 70, summaryY + yOff)
+         .text(formatRupees(val), 50, summaryY + yOff, { align: 'right', width: W - 20 });
+    };
+
+    drawRow('TOTAL MONTHLY DUE',    totalDueWithAllowances, 12);
+    drawRow('TOTAL PAID SALARY',    totalPaid,              30, C.primary, true);
+    
+    drawRow('ADVANCE CARRY-FORWARD', advanceSlip,           48, advanceSlip > 0 ? C.success : C.gray);
+    drawRow('ARREARS (DUE NEXT MONTH)', pendingSlip,       66, pendingSlip > 0 ? C.danger : C.gray);
+
+    const footerY = summaryY + 100;
 
     // ── Footer ────────────────────────────────────────────────────────────────
     doc.fillColor(C.gray).fontSize(8).font('Helvetica')
-       .text('This is a computer-generated payslip and does not require a signature.', 50, netY + 70, { align: 'center', width: W });
+       .text('This is a computer-generated payslip and does not require a signature.', 50, footerY, { align: 'center', width: W });
 
     if (payment.notes) {
       doc.fillColor(C.gray).fontSize(9)
-         .text(`Notes: ${payment.notes}`, 50, netY + 90);
+         .text(`Notes: ${payment.notes}`, 50, footerY + 20);
     }
 
     doc.end();

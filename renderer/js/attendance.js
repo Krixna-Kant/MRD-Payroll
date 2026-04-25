@@ -53,7 +53,14 @@ const AttendancePage = (() => {
       </div>
     `;
 
-    document.getElementById('att-mode-bulk')?  /* ── BULK DAILY MODE ─────────────────────────────────────────────────────── */
+    document.getElementById('att-mode-bulk')?.addEventListener('click', () => { _mode = 'bulk'; init(); });
+    document.getElementById('att-mode-monthly')?.addEventListener('click', () => { _mode = 'monthly'; init(); });
+
+    if (_mode === 'bulk') await initBulk();
+    else await initMonthly();
+  }
+
+  /* ── BULK DAILY MODE ─────────────────────────────────────────────────────── */
   async function initBulk() {
     const sunday = isSunday(_date);
     container().innerHTML = `
@@ -85,6 +92,7 @@ const AttendancePage = (() => {
         <span class="badge badge-success">P = Present</span>
         <span class="badge badge-warning">H = Half Day</span>
         <span class="badge badge-danger">A = Absent</span>
+        <span class="badge badge-info">WO = Weekly Off</span>
         <span class="badge badge-muted">— = Not marked</span>
       </div>
 
@@ -111,11 +119,77 @@ const AttendancePage = (() => {
     });
 
     document.getElementById('att-export-excel').addEventListener('click', async () => {
-      Helpers.setLoading('att-export-excel', true);
-      const r = await API.exportDailyAttendanceExcel(_date);
-      Helpers.setLoading('att-export-excel', false);
-      if (r.success) Toast.success('Excel Sheet exported to ' + r.filePath);
-      else if (r.error !== 'Cancelled.') Toast.error(r.error);
+      const empRes = await API.getEmployees({ status: 'active' });
+      const employees = empRes.employees || [];
+      const today = Helpers.todayIso();
+      const firstOfMonth = `${today.substring(0, 8)}01`;
+
+      Modal.open({
+        title: 'Export Attendance Report',
+        size: 'modal-md',
+        body: `
+          <div class="form-group mb-4">
+            <label class="form-label">Date Range</label>
+            <div class="flex gap-2">
+              <input type="date" id="exp-start-date" class="form-input" value="${firstOfMonth}" />
+              <div class="flex items-center">to</div>
+              <input type="date" id="exp-end-date" class="form-input" value="${today}" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label flex justify-between">
+              <span>Select Employees</span>
+              <label class="text-xs flex items-center gap-1 cursor-pointer" style="font-weight:400">
+                <input type="checkbox" id="exp-select-all" checked /> Select All
+              </label>
+            </label>
+            <div id="exp-emp-list" class="card" style="max-height:200px; overflow-y:auto; padding:8px; background:var(--bg-subtle)">
+              ${employees.map(e => `
+                <label class="flex items-center gap-2 p-1 hover-dim cursor-pointer" style="font-size:0.9rem">
+                  <input type="checkbox" class="exp-emp-check" value="${e.id}" checked />
+                  <span>${Helpers.escapeHtml(e.name)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn btn-secondary" id="exp-cancel">Cancel</button>
+          <button class="btn btn-primary" id="exp-run">
+            <span class="btn-text">Download Excel 📊</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+        `
+      });
+
+      const selectAll = document.getElementById('exp-select-all');
+      const checks = document.querySelectorAll('.exp-emp-check');
+      
+      selectAll.addEventListener('change', () => {
+        checks.forEach(c => c.checked = selectAll.checked);
+      });
+
+      document.getElementById('exp-cancel').addEventListener('click', Modal.close);
+      document.getElementById('exp-run').addEventListener('click', async () => {
+        const startDate = document.getElementById('exp-start-date').value;
+        const endDate   = document.getElementById('exp-end-date').value;
+        const selectedIds = Array.from(document.querySelectorAll('.exp-emp-check:checked')).map(c => parseInt(c.value));
+
+        if (!startDate || !endDate) { Toast.warning('Please select dates'); return; }
+        if (selectedIds.length === 0) { Toast.warning('Please select at least one employee'); return; }
+
+        Helpers.setLoading('exp-run', true);
+        const r = await API.exportAttendanceRangeExcel({ startDate, endDate, employeeIds: selectedIds });
+        Helpers.setLoading('exp-run', false);
+
+        if (r.success) {
+          Toast.success('Excel exported successfully!');
+          Modal.close();
+        } else if (r.error !== 'Cancelled.') {
+          Toast.error(r.error);
+        }
+      });
     });
 
     await loadBulk();
@@ -125,6 +199,7 @@ const AttendancePage = (() => {
     const listEl = document.getElementById('att-bulk-list');
     if (!listEl) return;
     listEl.innerHTML = `<div class="skeleton" style="height:200px;border-radius:12px"></div>`;
+    try {
 
     // Wait for settings to load projects list
     const settingsRes = await API.getSettings();
@@ -151,35 +226,60 @@ const AttendancePage = (() => {
     // Build state map
     const stateMap = {};
     records.forEach(r => {
+      let initStatus = r.status || null;
+      if (sunday && !r.status) {
+         initStatus = (r.sat_status === 'A' || r.mon_status === 'A') ? 'A' : 'WO';
+      }
       stateMap[r.id] = {
-        status:        r.status || null,
+        status:        initStatus,
+        isLocked:      !!r.status, // lock if there's already a saved status per persist rules
         checkIn:       r.check_in || '09:00',
         checkOut:      r.check_out || '18:00',
-        overtimeHours: parseFloat(r.overtime_hours || 0),
+        overtimeHours: Math.floor(parseFloat(r.overtime_hours || 0)),
         isSundayWork:  r.is_sunday_work ? true : (sunday && r.status ? true : false),
         projectName:   r.project_name || '',
       };
     });
 
-    // Helper: auto-save a single row to DB seamlessly
+    function applyRules(empId) {
+      const st = stateMap[empId];
+      const r = records.find(x => x.id === empId);
+
+      if (sunday) {
+        if (!st.status || st.status === '') {
+           st.status = (r.sat_status === 'A' || r.mon_status === 'A') ? 'A' : 'WO';
+        } else if (st.status === 'P') {
+           st.overtimeHours = st.isSundayWork ? 8 : 0;
+        }
+      }
+      st.overtimeHours = Math.floor(Math.max(0, st.overtimeHours));
+      if (st.overtimeHours < 1) st.overtimeHours = 0;
+    }
+
     async function autoSaveRow(empId) {
       const st = stateMap[empId];
-      if (!st.status) return; // don't save if unselected
-      await API.markAttendance({
-        employeeId: empId,
-        date: _date,
-        status: st.status,
-        checkIn: st.checkIn,
-        checkOut: st.checkOut,
-        overtimeHours: st.overtimeHours,
-        isSundayWork: st.isSundayWork,
-        projectName: st.projectName
-      });
-      // Briefly highlight row to indicate save
-      const tr = document.getElementById(`att-row-${empId}`);
-      if (tr) {
-        tr.style.background = 'rgba(74,222,128,0.1)';
-        setTimeout(() => tr.style.background = '', 500);
+      try {
+        const res = await API.markAttendance({
+          employeeId: empId,
+          date: _date,
+          status: st.status || '', 
+          checkIn: st.checkIn,
+          checkOut: st.checkOut,
+          overtimeHours: st.overtimeHours,
+          isSundayWork: st.isSundayWork,
+          projectName: st.projectName
+        });
+        
+        if (!res.success) throw new Error(res.error || 'Database operation failed');
+
+        const tr = document.getElementById(`att-row-${empId}`);
+        if (tr) {
+          tr.style.background = 'rgba(74,222,128,0.1)';
+          setTimeout(() => tr.style.background = '', 500);
+        }
+      } catch (err) {
+        Toast.error('Save error: ' + err.message);
+        console.error(err);
       }
     }
 
@@ -208,6 +308,7 @@ const AttendancePage = (() => {
               <th style="text-align:center">P</th>
               <th style="text-align:center">A</th>
               <th style="text-align:center">H</th>
+              <th style="text-align:center">WO</th>
               <th style="text-align:center">In Time</th>
               <th style="text-align:center">Out Time</th>
               <th style="text-align:center;min-width:110px">OT (hrs)</th>
@@ -228,10 +329,16 @@ const AttendancePage = (() => {
                       ${projects.map(p => `<option value="${Helpers.escapeHtml(p)}" ${st.projectName === p ? 'selected' : ''}>${Helpers.escapeHtml(p)}</option>`).join('')}
                     </select>
                   </td>
-                  <td style="text-align:center" id="status-badge-${r.id}">${statusBadge(st.status)}</td>
-                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'P' ? 'P' : ''}" data-id="${r.id}" data-status="P">P</button></td>
-                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'A' ? 'A' : ''}" data-id="${r.id}" data-status="A">A</button></td>
-                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'H' ? 'H' : ''}" data-id="${r.id}" data-status="H">H</button></td>
+                  <td style="text-align:center" id="status-badge-${r.id}">
+                    <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                      ${statusBadge(st.status)}
+                      ${st.isLocked ? `<button class="btn btn-sm btn-ghost att-unlock" data-id="${r.id}" style="padding:2px 6px; font-size:14px" title="Unlock Row">🔓</button>` : ''}
+                    </div>
+                  </td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'P' ? 'P' : ''}" data-id="${r.id}" data-status="P" style="${st.isLocked && st.status !== 'P' ? 'opacity:0.3' : ''}">P</button></td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'A' ? 'A' : ''}" data-id="${r.id}" data-status="A" style="${st.isLocked && st.status !== 'A' ? 'opacity:0.3' : ''}">A</button></td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'H' ? 'H' : ''}" data-id="${r.id}" data-status="H" style="${st.isLocked && st.status !== 'H' ? 'opacity:0.3' : ''}">H</button></td>
+                  <td style="text-align:center"><button class="att-btn att-quick-btn ${st.status === 'WO' ? 'WO' : ''}" data-id="${r.id}" data-status="WO" style="${st.isLocked && st.status !== 'WO' ? 'opacity:0.3' : ''}">WO</button></td>
                   <td style="text-align:center"><input type="time" class="form-input att-time-input" style="padding:4px;font-size:0.85rem" id="att-in-${r.id}" value="${st.checkIn}" data-id="${r.id}" data-type="in" /></td>
                   <td style="text-align:center"><input type="time" class="form-input att-time-input" style="padding:4px;font-size:0.85rem" id="att-out-${r.id}" value="${st.checkOut}" data-id="${r.id}" data-type="out" /></td>
                   <td style="text-align:center" id="att-ot-${r.id}"></td>
@@ -247,6 +354,7 @@ const AttendancePage = (() => {
         <span class="text-sm text-muted">Mark all as:</span>
         <button class="btn btn-sm btn-secondary att-mark-all" data-status="P">✓ All Present</button>
         <button class="btn btn-sm btn-secondary att-mark-all" data-status="A">✕ All Absent</button>
+        <button class="btn btn-sm btn-secondary att-mark-all" data-status="WO">ℹ All Weekly Off</button>
       </div>
     `;
 
@@ -259,27 +367,67 @@ const AttendancePage = (() => {
       if (e.target.closest('.att-quick-btn')) {
         const btn = e.target.closest('.att-quick-btn');
         const empId = parseInt(btn.dataset.id);
-        const newStatus = stateMap[empId].status === btn.dataset.status ? null : btn.dataset.status;
-        stateMap[empId].status = newStatus;
+        const st = stateMap[empId];
 
-        listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
-          b.className = `att-btn att-quick-btn${b.dataset.status === newStatus ? ' ' + newStatus : ''}`;
-        });
-        document.getElementById(`status-badge-${empId}`).innerHTML = statusBadge(newStatus);
+        if (st.isLocked) {
+           Toast.warning("Row is locked. Please click 🔓 to change.");
+           return;
+        }
+
+        st.status = btn.dataset.status;
+        applyRules(empId);
         
+        // Update Button rendering immediately
+        listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
+          b.className = `att-btn att-quick-btn${b.dataset.status === st.status ? ' ' + st.status : ''}`;
+          if (b.dataset.status !== st.status) {
+            b.style.opacity = '0.3';
+          } else {
+            b.style.opacity = '1';
+          }
+        });
+
         await autoSaveRow(empId);
+        st.isLocked = true;
+        
+        document.getElementById(`status-badge-${empId}`).innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+            ${statusBadge(st.status)}
+            <button class="btn btn-sm btn-ghost att-unlock" data-id="${empId}" style="padding:2px 6px; font-size:14px" title="Unlock Row">🔓</button>
+          </div>
+        `;
+      }
+
+      // Unlock Row Button
+      if (e.target.closest('.att-unlock')) {
+        const empId = parseInt(e.target.closest('.att-unlock').dataset.id);
+        const st = stateMap[empId];
+        st.isLocked = false;
+        
+        listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
+          b.style.opacity = '1';
+        });
+        document.getElementById(`status-badge-${empId}`).innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+            ${statusBadge(st.status)}
+          </div>
+        `;
       }
       
       // OT Adjustments
       if (e.target.closest('.att-ot-minus')) {
         const empId = parseInt(e.target.closest('.att-ot-minus').dataset.id);
-        stateMap[empId].overtimeHours = Math.max(0, stateMap[empId].overtimeHours - 0.5);
+        if (stateMap[empId].isLocked) { Toast.warning("Unlock row first"); return; }
+        stateMap[empId].overtimeHours = Math.max(0, stateMap[empId].overtimeHours - 1);
+        applyRules(empId);
         renderOT(empId);
         await autoSaveRow(empId);
       }
       if (e.target.closest('.att-ot-plus')) {
         const empId = parseInt(e.target.closest('.att-ot-plus').dataset.id);
-        stateMap[empId].overtimeHours += 0.5;
+        if (stateMap[empId].isLocked) { Toast.warning("Unlock row first"); return; }
+        stateMap[empId].overtimeHours += 1;
+        applyRules(empId);
         renderOT(empId);
         await autoSaveRow(empId);
       }
@@ -293,14 +441,27 @@ const AttendancePage = (() => {
 
         for (const r of records) {
           stateMap[r.id].status = s;
+          applyRules(r.id);
+          stateMap[r.id].isLocked = true;
           listEl.querySelectorAll(`.att-quick-btn[data-id="${r.id}"]`).forEach(b => {
             b.className = `att-btn att-quick-btn${b.dataset.status === s ? ' ' + s : ''}`;
+            if (b.dataset.status !== s) {
+              b.style.opacity = '0.3';
+            } else {
+              b.style.opacity = '1';
+            }
           });
-          document.getElementById(`status-badge-${r.id}`).innerHTML = statusBadge(s);
+          document.getElementById(`status-badge-${r.id}`).innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+              ${statusBadge(s)}
+              <button class="btn btn-sm btn-ghost att-unlock" data-id="${r.id}" style="padding:2px 6px; font-size:14px" title="Unlock Row">🔓</button>
+            </div>
+          `;
           await autoSaveRow(r.id);
         }
         
-        btn.innerHTML = s === 'P' ? '✓ All Present' : '✕ All Absent';
+        const labels = { P: '✓ All Present', A: '✕ All Absent', WO: 'ℹ All Weekly Off' };
+        btn.innerHTML = labels[s] || 'Mark All';
         btn.disabled = false;
         Toast.success('Saved all attendance globally.');
       }
@@ -313,10 +474,9 @@ const AttendancePage = (() => {
         const empId = parseInt(inp.dataset.id);
         if (inp.dataset.type === 'in') stateMap[empId].checkIn = inp.value;
         if (inp.dataset.type === 'out') stateMap[empId].checkOut = inp.value;
-        // Check rule: Auto calculate OT, and if it's less than 1 hour it counts as 0
         let ot = calcOvertime(stateMap[empId].checkIn, stateMap[empId].checkOut);
-        if (ot < 1) ot = 0;
         stateMap[empId].overtimeHours = ot;
+        applyRules(empId);
         renderOT(empId);
         await autoSaveRow(empId);
       }
@@ -332,16 +492,23 @@ const AttendancePage = (() => {
       if (e.target.classList.contains('att-sunday-check')) {
         const empId = parseInt(e.target.dataset.id);
         stateMap[empId].isSundayWork = e.target.checked;
+        applyRules(empId);
+        renderOT(empId);
         await autoSaveRow(empId);
       }
     });
+    } catch(err) {
+      console.error('[Attendance loadBulk ERROR]', err);
+      listEl.innerHTML = `<div class="empty-state"><h3 style="color:var(--danger)">Render Error</h3><p>${err.message}</p></div>`;
+      return;
+    }
   }
 
   function statusBadge(status) {
     if (!status) return `<span class="badge badge-muted">—</span>`;
-    const map = { P: 'badge-success', A: 'badge-danger', H: 'badge-warning' };
-    const labels = { P: 'Present', A: 'Absent', H: 'Half Day' };
-    return `<span class="badge ${map[status]}">${labels[status]}</span>`;
+    const map = { P: 'badge-success', A: 'badge-danger', H: 'badge-warning', WO: 'badge-info' };
+    const labels = { P: 'Present', A: 'Absent', H: 'Half Day', WO: 'Weekly Off' };
+    return `<span class="badge ${map[status] || 'badge-muted'}">${labels[status] || status}</span>`;
   }
 
   /* ── MONTHLY VIEW MODE ───────────────────────────────────────────────────── */

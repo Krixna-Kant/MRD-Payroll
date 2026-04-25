@@ -5,6 +5,7 @@
  */
 
 const { getDB } = require('../database/db');
+const { processMonthlyAttendanceStats } = require('../utils/rules');
 
 module.exports = function registerAttendanceHandlers(ipcMain) {
 
@@ -13,8 +14,8 @@ module.exports = function registerAttendanceHandlers(ipcMain) {
     const { employeeId, date, status, notes, markedBy, checkIn, checkOut, isSundayWork, projectName } = data;
     let { overtimeHours } = data;
     
-    // Only calculate overtime if it's strictly >= 1 hour
-    overtimeHours = overtimeHours || 0;
+    // Only allow strictly integer OT hours >= 1
+    overtimeHours = Math.floor(parseFloat(overtimeHours || 0));
     if (overtimeHours < 1) {
       overtimeHours = 0;
     }
@@ -65,21 +66,35 @@ module.exports = function registerAttendanceHandlers(ipcMain) {
   });
 
   // ── Bulk: Get all employees' attendance for a single date ─────────────────
-  // Returns only employees who had joined on or before `date` (joining_date <= date).
-  // Employees with no joining_date are always included.
+  // Returns only employees who had joined on or before `date`.
   ipcMain.handle('attendance:bulk', async (_, date) => {
     const db = getDB();
+    
+    // Check if requested date is Sunday
+    const reqDate = new Date(date);
+    const isSun = reqDate.getDay() === 0;
+    
+    let satStr = '', monStr = '';
+    if (isSun) {
+      const sat = new Date(reqDate); sat.setDate(sat.getDate() - 1);
+      const mon = new Date(reqDate); mon.setDate(mon.getDate() + 1);
+      satStr = sat.toISOString().split('T')[0];
+      monStr = mon.toISOString().split('T')[0];
+    }
+
     const rows = db.prepare(`
       SELECT e.id, e.name, e.phone, e.role, e.joining_date,
              a.status, a.notes, a.id as attendance_id,
              a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+             ${isSun ? `, (SELECT status FROM attendance WHERE employee_id = e.id AND date = ?) AS sat_status, (SELECT status FROM attendance WHERE employee_id = e.id AND date = ?) AS mon_status` : ''}
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
       WHERE e.status = 'active'
         AND (e.joining_date IS NULL OR e.joining_date <= ?)
       ORDER BY e.name ASC
-    `).all(date, date);
-    return { success: true, records: rows };
+    `).all(isSun ? [satStr, monStr, date, date] : [date, date]);
+
+    return { success: true, records: rows, isSunday: isSun };
   });
 
   // ── Monthly Attendance Summary (P/A/H counts + overtime + Sunday) ─────────
@@ -97,37 +112,7 @@ module.exports = function registerAttendanceHandlers(ipcMain) {
     // Determine effective start (max of month start and joining date)
     const effectiveStart = (joiningDate && joiningDate > start) ? joiningDate : start;
 
-    const rows = db.prepare(`
-      SELECT status, COUNT(*) as count
-      FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ?
-      GROUP BY status
-    `).all(empId, effectiveStart, end);
-
-    const summary = { P: 0, A: 0, H: 0, total: 0 };
-    rows.forEach(r => {
-      summary[r.status] = r.count;
-      summary.total += r.count;
-    });
-
-    // Effective working days: P + 0.5 * H
-    summary.effectiveDays = summary.P + summary.H * 0.5;
-
-    // Overtime totals for the month
-    const otRow = db.prepare(`
-      SELECT COALESCE(SUM(overtime_hours), 0) as totalOT
-      FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ? AND status IN ('P', 'H')
-    `).get(empId, effectiveStart, end);
-    summary.totalOvertimeHours = otRow.totalOT;
-
-    // Sunday work days count
-    const sunRow = db.prepare(`
-      SELECT COUNT(*) as sundays
-      FROM attendance
-      WHERE employee_id = ? AND date >= ? AND date <= ? AND is_sunday_work = 1 AND status IN ('P', 'H')
-    `).get(empId, effectiveStart, end);
-    summary.sundayWorkDays = sunRow.sundays;
+    const summary = processMonthlyAttendanceStats(db, empId, effectiveStart, end);
 
     return { success: true, summary };
   });

@@ -5,12 +5,12 @@
 
 const { getDB } = require('../database/db');
 const { generatePayslipPdf, generateMonthlyReportPdf } = require('../utils/pdf');
-const { generateMonthlyExcel, generateEmployeeExcel } = require('../utils/excel');
+const { generateMonthlyExcel, generateEmployeeExcel, generateDailyAttendanceExcel, generateAttendanceRangeExcel } = require('../utils/excel');
 const { dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-module.exports = function registerReportHandlers(ipcMain) {
+module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
 
   // ── Dashboard Statistics ───────────────────────────────────────────────────
   ipcMain.handle('reports:dashboard', async () => {
@@ -21,15 +21,34 @@ module.exports = function registerReportHandlers(ipcMain) {
 
     const totalEmployees = db.prepare(`SELECT COUNT(*) as n FROM employees WHERE status = 'active'`).get().n;
     const totalPayroll   = db.prepare(`SELECT COALESCE(SUM(salary), 0) as total FROM employees WHERE status = 'active'`).get().total;
+    
+    // This month's data
     const thisMonthAdvances = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) as total FROM advances WHERE month = ? AND year = ?
     `).get(month, year).total;
 
-    // Pending = active employees who don't have a 'paid' payment this month
-    const paidThisMonth = db.prepare(`
+    const totalPaidThisMonth = db.prepare(`
+       SELECT COALESCE(SUM(net_paid), 0) as total FROM payments WHERE month = ? AND year = ? AND status = 'paid'
+    `).get(month, year).total;
+
+    const paidCountThisMonth = db.prepare(`
       SELECT COUNT(*) as n FROM payments WHERE month = ? AND year = ? AND status = 'paid'
     `).get(month, year).n;
-    const pendingCount = totalEmployees - paidThisMonth;
+
+    const pendingCount = totalEmployees - paidCountThisMonth;
+
+    // Remaining Salary (approx: Sum of gross salaries for employees not paid this month)
+    const salaryRemainingToPay = db.prepare(`
+      SELECT COALESCE(SUM(salary), 0) as total FROM employees 
+      WHERE status = 'active' AND id NOT IN (
+        SELECT employee_id FROM payments WHERE month = ? AND year = ? AND status = 'paid'
+      )
+    `).get(month, year).total;
+
+    // Outstanding Advances (Total ever given - Total ever deducted)
+    const totalAdvancesGiven = db.prepare(`SELECT COALESCE(SUM(amount), 0) as n FROM advances`).get().n;
+    const totalAdvancesDeducted = db.prepare(`SELECT COALESCE(SUM(advance_deducted), 0) as n FROM payments`).get().n;
+    const outstandingAdvances = totalAdvancesGiven - totalAdvancesDeducted;
 
     // Recent 5 payments
     const recentPayments = db.prepare(`
@@ -74,10 +93,13 @@ module.exports = function registerReportHandlers(ipcMain) {
       success: true,
       stats: {
         totalEmployees,
-        totalPayroll,        // paisa
-        thisMonthAdvances,   // paisa
+        totalPayroll,
+        thisMonthAdvances,
+        totalPaidThisMonth,
+        salaryRemainingToPay,
+        outstandingAdvances,
         pendingCount,
-        paidThisMonth,
+        paidThisMonth: paidCountThisMonth,
         currentMonth: month,
         currentYear: year,
         recentPayments,
@@ -105,9 +127,10 @@ module.exports = function registerReportHandlers(ipcMain) {
 
     const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'My Company';
 
-    const { filePath } = await dialog.showSaveDialog({
+    const timeTag = new Date().getTime().toString().slice(-4);
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Payslip',
-      defaultPath: `Payslip_${payment.employee_name}_${payment.month}_${payment.year}.pdf`,
+      defaultPath: `Payslip_${payment.employee_name}_${payment.month}_${payment.year}_${timeTag}.pdf`,
       filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
     });
 
@@ -129,7 +152,7 @@ module.exports = function registerReportHandlers(ipcMain) {
 
     const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'My Company';
 
-    const { filePath } = await dialog.showSaveDialog({
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Monthly Report',
       defaultPath: `Monthly_Report_${month}_${year}.pdf`,
       filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
@@ -151,7 +174,7 @@ module.exports = function registerReportHandlers(ipcMain) {
       ORDER BY e.name ASC
     `).all(month, year);
 
-    const { filePath } = await dialog.showSaveDialog({
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Monthly Excel',
       defaultPath: `Monthly_Report_${month}_${year}.xlsx`,
       filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
@@ -172,7 +195,7 @@ module.exports = function registerReportHandlers(ipcMain) {
     const payments  = db.prepare(`SELECT * FROM payments  WHERE employee_id = ? ORDER BY year DESC, month DESC`).all(empId);
     const advances  = db.prepare(`SELECT * FROM advances  WHERE employee_id = ? ORDER BY date DESC`).all(empId);
 
-    const { filePath } = await dialog.showSaveDialog({
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Employee Report',
       defaultPath: `Employee_${employee.name.replace(/\s+/g, '_')}.xlsx`,
       filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
@@ -199,7 +222,7 @@ module.exports = function registerReportHandlers(ipcMain) {
 
     if (!records || records.length === 0) return { success: false, error: 'No active employees to export.' };
 
-    const { filePath } = await dialog.showSaveDialog({
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Daily Attendance',
       defaultPath: `Attendance_${date}.xlsx`,
       filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
@@ -208,6 +231,38 @@ module.exports = function registerReportHandlers(ipcMain) {
     if (!filePath) return { success: false, error: 'Cancelled.' };
 
     await generateDailyAttendanceExcel(records, date, filePath);
+    return { success: true, filePath };
+  });
+
+  // ── Generate Attendance Range Excel ────────────────────────────────────────
+  ipcMain.handle('reports:attendanceRangeExcel', async (event, params) => {
+    const { startDate, endDate, employeeIds } = params;
+    const db = getDB();
+
+    // 1. Fetch relevant records
+    const placeholders = employeeIds.map(() => '?').join(',');
+    const query = `
+      SELECT e.id, e.name, e.role, e.joining_date,
+             a.date, a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+      FROM employees e
+      LEFT JOIN attendance a ON a.employee_id = e.id AND a.date >= ? AND a.date <= ?
+      WHERE e.id IN (${placeholders})
+      ORDER BY a.date ASC, e.name ASC
+    `;
+    
+    const records = db.prepare(query).all(startDate, endDate, ...employeeIds);
+
+    if (!records || records.length === 0) return { success: false, error: 'No attendance data found for the selected range.' };
+
+    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
+      title: 'Save Attendance Report',
+      defaultPath: `Attendance_Report_${startDate}_to_${endDate}.xlsx`,
+      filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+    });
+
+    if (!filePath) return { success: false, error: 'Cancelled.' };
+
+    await generateAttendanceRangeExcel(records, startDate, endDate, filePath);
     return { success: true, filePath };
   });
 

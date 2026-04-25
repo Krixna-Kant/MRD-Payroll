@@ -56,7 +56,7 @@ const EmployeesPage = (() => {
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Role / Designation</th>
-                <th>Monthly Salary</th>
+                <th>Per Day Salary</th>
                 <th>Joining Date</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -163,8 +163,8 @@ const EmployeesPage = (() => {
             <input id="ef-role" class="form-input" placeholder="e.g. Driver, Cook, Guard" value="${Helpers.escapeHtml(emp?.role || '')}" />
           </div>
           <div class="form-group">
-            <label class="form-label">Monthly Salary (₹)</label>
-            <input id="ef-salary" class="form-input" type="number" min="0" step="100" placeholder="e.g. 12000" value="${salaryRupees}" />
+            <label class="form-label">Per Day Salary (₹) *</label>
+            <input id="ef-salary" class="form-input" type="number" min="0" step="50" placeholder="e.g. 400" value="${salaryRupees}" />
           </div>
         </div>
         <div class="form-row mt-3">
@@ -184,6 +184,7 @@ const EmployeesPage = (() => {
           <label class="form-label">Notes (optional)</label>
           <input id="ef-notes" class="form-input" placeholder="Any additional information" value="${Helpers.escapeHtml(emp?.notes || '')}" />
         </div>
+
         <div id="ef-error" class="form-error mt-3" hidden></div>
       `,
       footer: `
@@ -204,13 +205,14 @@ const EmployeesPage = (() => {
     errEl.hidden = true;
 
     const data = {
-      name:        document.getElementById('ef-name').value.trim(),
-      phone:       document.getElementById('ef-phone').value.trim(),
-      role:        document.getElementById('ef-role').value.trim(),
-      salary:      document.getElementById('ef-salary').value,  // ₹, API converts to paisa
-      joiningDate: document.getElementById('ef-joining').value,
-      status:      document.getElementById('ef-status').value,
-      notes:       document.getElementById('ef-notes').value.trim(),
+      name:             document.getElementById('ef-name').value.trim(),
+      phone:            document.getElementById('ef-phone').value.trim(),
+      role:             document.getElementById('ef-role').value.trim(),
+      salary:           document.getElementById('ef-salary').value,  // ₹
+      fixedGrossSalary: 0, // removed feature
+      joiningDate:      document.getElementById('ef-joining').value,
+      status:           document.getElementById('ef-status').value,
+      notes:            document.getElementById('ef-notes').value.trim(),
     };
 
     if (!data.name) { errEl.textContent = 'Employee name is required.'; errEl.hidden = false; return; }
@@ -249,8 +251,10 @@ const EmployeesPage = (() => {
         </div>
         <div class="grid-2">
           ${profileRow('📱 Phone', e.phone || '—')}
-          ${profileRow('💰 Monthly Salary', API.fmtRupees(e.salary))}
+          ${profileRow('💰 Per Day Salary', API.fmtRupees(e.salary))}
           ${profileRow('📅 Joining Date', Helpers.formatDate(e.joining_date))}
+        </div>
+        <div style="margin-top:20px;margin-bottom:20px">
           ${profileRow('📝 Notes', e.notes || '—')}
         </div>
         <div class="divider"></div>

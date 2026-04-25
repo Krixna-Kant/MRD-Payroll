@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportMonthlyExcel:   (month, year)        => ipcRenderer.invoke('reports:monthlyExcel', month, year),
   exportEmployeeExcel:  (empId)              => ipcRenderer.invoke('reports:employeeExcel', empId),
   exportDailyAttendanceExcel: (date)         => ipcRenderer.invoke('reports:dailyAttendanceExcel', date),
+  exportAttendanceRangeExcel: (params)       => ipcRenderer.invoke('reports:attendanceRangeExcel', params),
 
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings:          ()                   => ipcRenderer.invoke('settings:getAll'),

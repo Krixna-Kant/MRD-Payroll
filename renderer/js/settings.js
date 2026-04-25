@@ -39,6 +39,20 @@ const SettingsPage = (() => {
             <span class="text-xs text-muted">When ON: salary = (present days / working days) × monthly salary.<br>When OFF: full salary is always payable (advances still deducted).</span>
           </div>
           <div class="form-group mt-3">
+            <label class="form-label" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+              <input id="set-sunday-ot" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+              Enable Sunday Overtime
+            </label>
+            <span class="text-xs text-muted">Automatically adds 8 Hours OT if present on Sunday.</span>
+          </div>
+          <div class="form-group mt-3">
+            <label class="form-label" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+              <input id="set-weekly-off" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+              Enable Paid Weekly Off Rules
+            </label>
+            <span class="text-xs text-muted">Automatically marks unmarked Sundays as Paid (WO). Sandwich Rule applies.</span>
+          </div>
+          <div class="form-group mt-3">
             <label class="form-label">Active Projects List</label>
             <input id="set-projects" class="form-input" placeholder="e.g. Office, Site A, Site B" />
             <span class="text-xs text-muted mt-3">Comma-separated list of projects available for attendance tagging.</span>
@@ -117,6 +131,8 @@ const SettingsPage = (() => {
     if (s.company_name)   document.getElementById('set-company').value = s.company_name;
     if (s.working_days)   document.getElementById('set-working-days').value = s.working_days;
     if (s.use_attendance) document.getElementById('set-att-toggle').checked = s.use_attendance === '1';
+    if (s.enable_sunday_ot) document.getElementById('set-sunday-ot').checked = s.enable_sunday_ot === '1';
+    if (s.enable_weekly_off) document.getElementById('set-weekly-off').checked = s.enable_weekly_off === '1';
     
     if (s.projects_list) {
       try {
@@ -143,7 +159,7 @@ const SettingsPage = (() => {
               <tr>
                 <td class="font-600">${Helpers.escapeHtml(u.username)}</td>
                 <td>${Helpers.escapeHtml(u.full_name || '—')}</td>
-                <td>${u.role === 'admin' ? '<span class="badge badge-accent">Admin</span>' : '<span class="badge badge-muted">Staff</span>'}</td>
+                <td>${u.role === 'admin' ? '<span class="badge badge-accent">Admin</span>' : u.role === 'hr' ? '<span class="badge badge-warning">HR</span>' : '<span class="badge badge-muted">Staff</span>'}</td>
                 <td>
                   <button class="btn btn-sm btn-danger usr-del-btn" data-id="${u.id}" data-name="${Helpers.escapeHtml(u.username)}">Delete</button>
                 </td>
@@ -169,12 +185,14 @@ const SettingsPage = (() => {
       const company_name  = document.getElementById('set-company').value.trim();
       const working_days  = document.getElementById('set-working-days').value;
       const use_attendance= document.getElementById('set-att-toggle').checked ? '1' : '0';
+      const enable_sunday_ot = document.getElementById('set-sunday-ot').checked ? '1' : '0';
+      const enable_weekly_off = document.getElementById('set-weekly-off').checked ? '1' : '0';
       const projStr       = document.getElementById('set-projects').value.trim();
       const projectsArr   = projStr.split(',').map(s => s.trim()).filter(Boolean);
       const projects_list = JSON.stringify(projectsArr);
 
       Helpers.setLoading('set-save-config', true);
-      const res = await API.saveSettings({ company_name, working_days, use_attendance, projects_list });
+      const res = await API.saveSettings({ company_name, working_days, use_attendance, enable_sunday_ot, enable_weekly_off, projects_list });
       Helpers.setLoading('set-save-config', false);
 
       if (res.success) {
@@ -220,8 +238,9 @@ const SettingsPage = (() => {
             <div class="form-group mt-3"><label class="form-label">Password *</label><input id="nu-password" type="password" class="form-input" placeholder="Min. 6 characters" /></div>
             <div class="form-group mt-3"><label class="form-label">Role</label>
               <select id="nu-role" class="form-select">
-                <option value="staff">Staff</option>
-                <option value="admin">Admin</option>
+                <option value="staff">Staff - Read Only / Basic</option>
+                <option value="hr">HR - Manage Attendance</option>
+                <option value="admin">Admin - Full Access</option>
               </select>
             </div>
             <div id="nu-error" class="form-error mt-3" hidden></div>

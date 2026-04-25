@@ -42,13 +42,14 @@ module.exports = function registerEmployeeHandlers(ipcMain) {
     if (!emp.name || !emp.name.trim()) return { success: false, error: 'Employee name is required.' };
 
     const result = db.prepare(`
-      INSERT INTO employees (name, phone, role, salary, joining_date, status, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO employees (name, phone, role, salary, fixed_gross_salary, joining_date, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       emp.name.trim(),
       emp.phone || null,
       emp.role  || null,
-      emp.salary || 0,           // already in paisa
+      emp.salary || 0,
+      emp.fixedGrossSalary || 0,
       emp.joiningDate || null,
       emp.status || 'active',
       emp.notes || null
@@ -64,14 +65,15 @@ module.exports = function registerEmployeeHandlers(ipcMain) {
 
     db.prepare(`
       UPDATE employees
-      SET name = ?, phone = ?, role = ?, salary = ?, joining_date = ?,
+      SET name = ?, phone = ?, role = ?, salary = ?, fixed_gross_salary = ?, joining_date = ?,
           status = ?, notes = ?, updated_at = strftime('%s', 'now')
       WHERE id = ?
     `).run(
       emp.name.trim(),
       emp.phone       || null,
       emp.role        || null,
-      emp.salary      || 0,     // already in paisa
+      emp.salary      || 0,
+      emp.fixedGrossSalary || 0,
       emp.joiningDate || null,
       emp.status      || 'active',
       emp.notes       || null,

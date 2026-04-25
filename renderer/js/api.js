@@ -39,12 +39,14 @@ const API = (() => {
     return window.electronAPI.createEmployee({
       ...emp,
       salary: toPaisa(emp.salary), // ₹ → paisa before storing
+      fixedGrossSalary: toPaisa(emp.fixedGrossSalary), 
     });
   }
   async function updateEmployee(id, emp) {
     return window.electronAPI.updateEmployee(id, {
       ...emp,
       salary: toPaisa(emp.salary),
+      fixedGrossSalary: toPaisa(emp.fixedGrossSalary),
     });
   }
   async function deleteEmployee(id) { return window.electronAPI.deleteEmployee(id); }
@@ -76,6 +78,8 @@ const API = (() => {
     return window.electronAPI.createPayment({
       ...data,
       otherDeductions: toPaisa(data.otherDeductionsRupees || 0),
+      foodAllowance: toPaisa(data.foodAllowanceRupees || 0),
+      travelAllowance: toPaisa(data.travelAllowanceRupees || 0),
       paidAmount: toPaisa(data.paidAmountRupees || 0),
     });
   }
@@ -89,6 +93,7 @@ const API = (() => {
   async function exportMonthlyExcel(m, y)    { return window.electronAPI.exportMonthlyExcel(m, y); }
   async function exportEmployeeExcel(empId)  { return window.electronAPI.exportEmployeeExcel(empId); }
   async function exportDailyAttendanceExcel(date) { return window.electronAPI.exportDailyAttendanceExcel(date); }
+  async function exportAttendanceRangeExcel(params) { return window.electronAPI.exportAttendanceRangeExcel(params); }
 
   // ── Settings ────────────────────────────────────────────────────────────
   async function getSettings()               { return window.electronAPI.getSettings(); }
@@ -113,7 +118,7 @@ const API = (() => {
     // Payments
     getPayments, getSalaryCalculation, calculateAll, createPayment, updatePayment, deletePayment,
     // Reports
-    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportMonthlyExcel, exportEmployeeExcel, exportDailyAttendanceExcel,
+    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportMonthlyExcel, exportEmployeeExcel, exportDailyAttendanceExcel, exportAttendanceRangeExcel,
     // Settings
     getSettings, saveSettings,
     // Backup

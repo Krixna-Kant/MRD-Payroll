@@ -55,8 +55,17 @@ const AuthModule = (() => {
 
     // Update sidebar user chip
     $('user-name-display').textContent = res.user.fullName || res.user.username;
-    $('user-role-display').textContent = res.user.role === 'admin' ? 'Administrator' : 'Staff';
+    $('user-role-display').textContent = res.user.role === 'admin' ? 'Administrator' : res.user.role === 'hr' ? 'HR Manager' : 'Staff';
     $('user-avatar').textContent = (res.user.fullName || res.user.username)[0].toUpperCase();
+
+    // HR restriction mechanism: Hide non-attendance tabs for HR users.
+    const isHR = res.user.role === 'hr';
+    ['nav-employees', 'nav-advances', 'nav-payments', 'nav-settings', 'nav-reports'].forEach(id => {
+       const el = $(id);
+       if (el) { el.style.display = isHR ? 'none' : 'flex'; }
+    });
+    const div = document.querySelector('.nav-divider');
+    if (div) { div.style.display = isHR ? 'none' : 'block'; }
 
     // Hide login, show app
     $('login-screen').style.display = 'none';

@@ -240,8 +240,9 @@ const Helpers = (() => {
 
   function monthName(m)      { return MONTH_NAMES[(m || 1) - 1]; }
   function shortMonth(m)     { return SHORT_MONTHS[(m || 1) - 1]; }
-  function todayIso()        { return new Date().toISOString().slice(0, 10); }
+  function todayIso(d)       { return (d || new Date()).toISOString().slice(0, 10); }
   function formatDate(iso)   { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }); }
+  function formatDateShort(iso) { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' }); }
 
   function buildMonthSelect(id, val) {
     const opts = MONTH_NAMES.map((n, i) =>
@@ -286,7 +287,7 @@ const Helpers = (() => {
 
   return {
     MONTH_NAMES, SHORT_MONTHS,
-    monthName, shortMonth, todayIso, formatDate,
+    monthName, shortMonth, todayIso, formatDate, formatDateShort,
     buildMonthSelect, buildYearSelect,
     escapeHtml, debounce, setLoading, paginate,
   };

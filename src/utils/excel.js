@@ -36,7 +36,7 @@ async function generateMonthlyExcel(payments, month, year, outputPath) {
   // Header row
   const headers = [
     '#', 'Employee Name', 'Role/Designation', 'Phone',
-    'Gross Salary (₹)', 'Advance Deducted (₹)', 'Other Deductions (₹)',
+    'Gross Salary (₹)', 'Food Allow. (₹)', 'Travel Allow. (₹)', 'Advance Deducted (₹)', 'Other Deductions (₹)',
     'Net Paid (₹)', 'Payment Mode', 'Status'
   ];
   const headerRow = ws.addRow(headers);
@@ -54,16 +54,18 @@ async function generateMonthlyExcel(payments, month, year, outputPath) {
     { key: 'name',    width: 22 },
     { key: 'role',    width: 18 },
     { key: 'phone',   width: 14 },
-    { key: 'gross',   width: 18 },
-    { key: 'advance', width: 20 },
-    { key: 'others',  width: 20 },
+    { key: 'gross',   width: 16 },
+    { key: 'food',    width: 16 },
+    { key: 'travel',  width: 16 },
+    { key: 'advance', width: 18 },
+    { key: 'others',  width: 18 },
     { key: 'net',     width: 16 },
     { key: 'mode',    width: 14 },
     { key: 'status',  width: 12 },
   ];
 
   // Data rows
-  let totGross = 0, totAdv = 0, totOther = 0, totNet = 0;
+  let totGross = 0, totFood = 0, totTravel = 0, totAdv = 0, totOther = 0, totNet = 0;
   payments.forEach((p, i) => {
     const row = ws.addRow([
       i + 1,
@@ -71,6 +73,8 @@ async function generateMonthlyExcel(payments, month, year, outputPath) {
       p.employee_role || '-',
       p.employee_phone || '-',
       rupees(p.gross_salary),
+      rupees(p.food_allowance || 0),
+      rupees(p.travel_allowance || 0),
       rupees(p.advance_deducted),
       rupees(p.other_deductions),
       rupees(p.net_paid),
@@ -83,19 +87,21 @@ async function generateMonthlyExcel(payments, month, year, outputPath) {
     }
 
     // Color status cell
-    const statusCell = row.getCell(10);
+    const statusCell = row.getCell(12);
     statusCell.fill  = fillColor(p.status === 'paid' ? '#10b981' : '#f59e0b');
     statusCell.font  = { bold: true, color: { argb: 'FFFFFFFF' } };
     statusCell.alignment = { horizontal: 'center' };
 
     // Right-align currency cells
-    [5, 6, 7, 8].forEach(ci => {
+    [5, 6, 7, 8, 9, 10].forEach(ci => {
       const c = row.getCell(ci);
       c.numFmt = '₹#,##0.00';
       c.alignment = { horizontal: 'right' };
     });
 
     totGross += p.gross_salary;
+    totFood  += (p.food_allowance || 0);
+    totTravel+= (p.travel_allowance || 0);
     totAdv   += p.advance_deducted;
     totOther += p.other_deductions;
     totNet   += p.net_paid;
@@ -104,14 +110,14 @@ async function generateMonthlyExcel(payments, month, year, outputPath) {
   // Totals row
   const totRow = ws.addRow([
     '', 'TOTAL', '', '',
-    rupees(totGross), rupees(totAdv), rupees(totOther), rupees(totNet),
+    rupees(totGross), rupees(totFood), rupees(totTravel), rupees(totAdv), rupees(totOther), rupees(totNet),
     '', `${payments.length} employees`
   ]);
   totRow.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill  = fillColor('#6366f1');
   });
-  [5, 6, 7, 8].forEach(ci => {
+  [5, 6, 7, 8, 9, 10].forEach(ci => {
     totRow.getCell(ci).numFmt = '₹#,##0.00';
     totRow.getCell(ci).alignment = { horizontal: 'right' };
   });
@@ -250,4 +256,68 @@ async function generateDailyAttendanceExcel(records, date, outputPath) {
   await wb.xlsx.writeFile(outputPath);
 }
 
-module.exports = { generateMonthlyExcel, generateEmployeeExcel, generateDailyAttendanceExcel };
+async function generateAttendanceRangeExcel(records, startDate, endDate, outputPath) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LocalPayroll';
+
+  const ws = wb.addWorksheet('Attendance Report');
+
+  ws.mergeCells('A1:J1');
+  const t1 = ws.getCell('A1');
+  t1.value = `Attendance Report — ${startDate} to ${endDate}`;
+  t1.font  = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  t1.fill  = fillColor('#6366f1');
+  t1.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  const ph = ws.addRow(['#', 'Date', 'Employee Name', 'Role', 'Project', 'Status', 'In Time', 'Out Time', 'OT (hrs)', 'Sunday?']);
+  ph.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill  = fillColor('#1e1e2e');
+    c.alignment = { horizontal: 'center' };
+  });
+
+  ws.columns = [
+    { width: 6 }, { width: 14 }, { width: 22 }, { width: 14 }, { width: 14 }, 
+    { width: 10 }, { width: 12 }, { width: 12 }, { width: 10 }, { width: 10 }
+  ];
+
+  records.forEach((r, i) => {
+    // Skip if date is before joining date
+    if (r.date && r.joining_date && r.date < r.joining_date) return;
+
+    const row = ws.addRow([
+      i + 1,
+      r.date || '-',
+      r.name,
+      r.role || '-',
+      r.project_name || '-',
+      r.status || 'Not Marked',
+      r.check_in || '-',
+      r.check_out || '-',
+      r.overtime_hours || 0,
+      r.is_sunday_work ? 'Yes' : 'No'
+    ]);
+    if (i % 2 === 0) row.eachCell(c => { c.fill = fillColor('#f9fafb'); });
+
+    const sc = row.getCell(6);
+    if(r.status === 'P') sc.fill = fillColor('#10b981'); // success
+    else if(r.status === 'A') sc.fill = fillColor('#ef4444'); // danger
+    else if(r.status === 'H') sc.fill = fillColor('#f59e0b'); // warning
+
+    sc.font = { bold: true, color: { argb: r.status ? 'FFFFFFFF' : 'FF000000' } };
+    sc.alignment = { horizontal: 'center' };
+    [2, 6, 7, 8, 9, 10].forEach(ci => {
+       row.getCell(ci).alignment = { horizontal: 'center' };
+    });
+  });
+
+  await wb.xlsx.writeFile(outputPath);
+}
+
+module.exports = { 
+  generateMonthlyExcel, 
+  generateEmployeeExcel, 
+  generateDailyAttendanceExcel,
+  generateAttendanceRangeExcel 
+};

@@ -142,6 +142,41 @@ function runMigrations() {
     console.log('[DB] Added attendance.project_name column');
   }
 
+  // ── Migration: Allowances & Salary updates ─────────────────────────────────
+  const empCols = db.prepare(`PRAGMA table_info(employees)`).all().map(c => c.name);
+  if (!empCols.includes('fixed_gross_salary')) {
+    db.exec(`ALTER TABLE employees ADD COLUMN fixed_gross_salary INTEGER DEFAULT 0`);
+    console.log('[DB] Added employees.fixed_gross_salary column');
+  }
+
+  const payCols = db.prepare(`PRAGMA table_info(payments)`).all().map(c => c.name);
+  if (!payCols.includes('food_allowance')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN food_allowance INTEGER DEFAULT 0`);
+    console.log('[DB] Added payments.food_allowance column');
+  }
+  if (!payCols.includes('travel_allowance')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN travel_allowance INTEGER DEFAULT 0`);
+    console.log('[DB] Added payments.travel_allowance column');
+  }
+  if (!payCols.includes('present_days')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN present_days REAL DEFAULT 0`);
+  }
+  if (!payCols.includes('half_days')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN half_days REAL DEFAULT 0`);
+  }
+  if (!payCols.includes('absent_days')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN absent_days REAL DEFAULT 0`);
+  }
+  if (!payCols.includes('wo_days')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN wo_days REAL DEFAULT 0`);
+  }
+  if (!payCols.includes('overtime_hours')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN overtime_hours REAL DEFAULT 0`);
+  }
+  if (!payCols.includes('overtime_pay')) {
+    db.exec(`ALTER TABLE payments ADD COLUMN overtime_pay INTEGER DEFAULT 0`);
+  }
+
   // ── Migration: Seed default settings ───────────────────────────────────────
   const initSetting = (k, v) => db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run(k, v);
   initSetting('company_name', 'My Payroll Co.');
@@ -169,6 +204,8 @@ function runMigrations() {
   setDefault.run('office_start_time', '09:00');
   setDefault.run('office_end_time', '18:00');
   setDefault.run('sunday_pay_multiplier', '2');
+  setDefault.run('enable_sunday_ot', '1');
+  setDefault.run('enable_weekly_off', '1');
 
   console.log('[DB] Migrations complete.');
 }
