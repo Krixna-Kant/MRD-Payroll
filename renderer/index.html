@@ -103,6 +103,10 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>
         <span class="nav-label">Attendance</span>
       </a>
+      <a href="#" class="nav-item" data-page="leaves" id="nav-leaves">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+        <span class="nav-label">Leaves</span>
+      </a>
       <a href="#" class="nav-item" data-page="advances" id="nav-advances">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>
         <span class="nav-label">Advances</span>
@@ -111,9 +115,31 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         <span class="nav-label">Payments</span>
       </a>
-      <a href="#" class="nav-item" data-page="reports" id="nav-reports">
+      <a href="#" class="nav-item" data-page="expenses" id="nav-expenses">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+        <span class="nav-label">Expenses</span>
+      </a>
+      <a href="#" class="nav-item" data-page="projects">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        <span class="nav-label">Projects</span>
+      </a>
+      <a href="#" class="nav-item" data-page="staff-docs" id="nav-staff-docs">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
-        <span class="nav-label">Reports</span>
+        <span class="nav-label">Staff Docs</span>
+      </a>
+
+      <div class="nav-title">System & Security</div>
+      <a href="#" class="nav-item" data-page="alerts">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+        <span class="nav-label">Alerts & Reminders</span>
+      </a>
+      <a href="#" class="nav-item" data-page="activity">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="nav-label">Activity Log</span>
+      </a>
+      <a href="#" class="nav-item" data-page="reports">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span class="nav-label">Reports & Backup</span>
       </a>
 
       <div class="nav-divider"></div>
@@ -157,11 +183,18 @@
 
     <!-- Page sections (only one visible at a time) -->
     <div id="page-dashboard"  class="page-section active"></div>
+    <div id="page-projects"   class="page-section" hidden></div>
+    <div id="page-project_dashboard" class="page-section" hidden></div>
+    <div id="page-activity" class="page-section" hidden></div>
+    <div id="page-alerts" class="page-section" hidden></div>
     <div id="page-employees"  class="page-section"></div>
     <div id="page-attendance" class="page-section"></div>
     <div id="page-advances"   class="page-section"></div>
     <div id="page-payments"   class="page-section"></div>
     <div id="page-reports"    class="page-section"></div>
+    <div id="page-leaves"     class="page-section"></div>
+    <div id="page-expenses"   class="page-section"></div>
+    <div id="page-staff-docs" class="page-section"></div>
     <div id="page-settings"   class="page-section"></div>
   </main>
 </div>
@@ -182,8 +215,15 @@
 <script src="js/employees.js"></script>
 <script src="js/attendance.js"></script>
 <script src="js/advances.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/project_dashboard.js"></script>
+<script src="js/activity_logs.js"></script>
+<script src="js/alerts.js"></script>
 <script src="js/payments.js"></script>
 <script src="js/reports.js"></script>
+<script src="js/leaves.js"></script>
+<script src="js/expenses.js"></script>
+<script src="js/staff_docs.js"></script>
 <script src="js/settings.js"></script>
 </body>
 </html>

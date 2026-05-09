@@ -1,5 +1,9 @@
 const { getDB } = require('../database/db');
 
+const getLocalYMD = (d) => {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
   const sundayOTEnabled = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'enable_sunday_ot'`).get()?.value || '1', 10) === 1;
   const woEnabled = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'enable_weekly_off'`).get()?.value || '1', 10) === 1;
@@ -7,11 +11,11 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
   // Get raw attendance + adjacent days (to handle sandwich rule that crosses month boundary)
   const expandedStartD = new Date(effectiveStart + 'T00:00:00');
   expandedStartD.setDate(expandedStartD.getDate() - 1);
-  const expandedStart = expandedStartD.toISOString().split('T')[0];
+  const expandedStart = getLocalYMD(expandedStartD);
 
   const expandedEndD = new Date(end + 'T00:00:00');
   expandedEndD.setDate(expandedEndD.getDate() + 1);
-  const expandedEnd = expandedEndD.toISOString().split('T')[0];
+  const expandedEnd = getLocalYMD(expandedEndD);
 
   const rawRecords = db.prepare(`
     SELECT date, status, overtime_hours, is_sunday_work 
@@ -29,9 +33,22 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
 
   const startD = new Date(effectiveStart + 'T00:00:00');
   const endD = new Date(end + 'T00:00:00');
+  
+  // To avoid phantom 'Absent' or 'Weekly Off' counts for future days,
+  // we only process up to today's date if the month is current/future.
+  const todayStr = getLocalYMD(new Date());
+  const processingEndD = new Date(endD);
+  if (todayStr < end) {
+      const todayD = new Date(todayStr + 'T00:00:00');
+      if (todayD < processingEndD) {
+          // If we are looking at the current month, only calculate stats up to today.
+          // This ensures "Net Payable" and attendance badges reflect reality.
+          processingEndD.setTime(todayD.getTime());
+      }
+  }
 
-  for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split('T')[0];
+  for (let d = new Date(startD); d <= processingEndD; d.setDate(d.getDate() + 1)) {
+    const dateStr = getLocalYMD(d);
     const rec = recordMap[dateStr];
     const sunday = d.getDay() === 0;
 
@@ -43,8 +60,8 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
           const prevDay = new Date(d); prevDay.setDate(d.getDate() - 1);
           const nextDay = new Date(d); nextDay.setDate(d.getDate() + 1);
           
-          const prevStr = prevDay.toISOString().split('T')[0];
-          const nextStr = nextDay.toISOString().split('T')[0];
+          const prevStr = getLocalYMD(prevDay);
+          const nextStr = getLocalYMD(nextDay);
           const stPrev = recordMap[prevStr]?.status;
           const stNext = recordMap[nextStr]?.status;
 
@@ -57,8 +74,8 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
         }
       } else if (finalStatus === 'P' || finalStatus === 'H') {
         sundayWorkDays += 1;
-        if (sundayOTEnabled) {
-          // Add 8 hours OT automatically if present on Sunday
+        if (sundayOTEnabled && rec && rec.is_sunday_work) {
+          // Add 8 hours OT automatically if present on Sunday and Sun 2x is checked
           totalOvertimeHours += 8;
         }
       }
@@ -70,7 +87,15 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
     else if (finalStatus === 'WO') { WO++; effectiveDays += 1; } 
 
     if (rec && rec.status && rec.status !== 'A') {
-      totalOvertimeHours += (rec.overtime_hours || 0);
+      let ot = rec.overtime_hours || 0;
+      
+      // Backward compatibility: The old UI erroneously saved 8 hours of OT automatically 
+      // when a user was marked Present on a Sunday. To prevent double-counting old records:
+      if (sunday && sundayOTEnabled && rec.is_sunday_work && ot >= 8) {
+        ot -= 8;
+      }
+      
+      totalOvertimeHours += ot;
     }
   }
 

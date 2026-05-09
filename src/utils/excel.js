@@ -315,9 +315,244 @@ async function generateAttendanceRangeExcel(records, startDate, endDate, outputP
   await wb.xlsx.writeFile(outputPath);
 }
 
+// ── Monthly Attendance Register (Grid Layout) ──────────────────────────────
+async function generateAttendanceRegisterExcel(data, month, year, outputPath) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LocalPayroll';
+  const ws = wb.addWorksheet(`Register ${MONTHS[month - 1]} ${year}`);
+
+  // Freeze first 2 columns and first 2 rows
+  ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 2 }];
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const dateColumns = [];
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, month - 1, d);
+    dateColumns.push({
+      day: dayNames[dateObj.getDay()],
+      dateStr: String(d).padStart(2, '0'),
+      isSun: dateObj.getDay() === 0,
+      fullDate: `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    });
+  }
+
+  // Row 1: Day Headers
+  const row1 = ['EMP. Name', 'Designation'];
+  dateColumns.forEach(c => row1.push(c.day));
+  row1.push('Total Days', 'Present', 'WO', 'HD', 'Absent', 'Half', 'Total', 'Total OT');
+
+  // Row 2: Date Headers
+  const row2 = ['', ''];
+  dateColumns.forEach(c => row2.push(c.dateStr));
+  row2.push('', '', '', '', '', '', '', '');
+
+  const hr1 = ws.addRow(row1);
+  const hr2 = ws.addRow(row2);
+
+  // Merge headers for fixed columns and summary columns
+  ws.mergeCells('A1:A2'); // EMP. Name
+  ws.mergeCells('B1:B2'); // Designation
+  
+  const sumStartCol = 2 + daysInMonth + 1; // 1-indexed
+  for (let i = 0; i < 8; i++) {
+    const colLetter = ws.getColumn(sumStartCol + i).letter;
+    ws.mergeCells(`${colLetter}1:${colLetter}2`);
+  }
+
+  // Header Styling
+  [hr1, hr2].forEach(row => {
+    row.eachCell((cell, colNumber) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = {
+        top: { style: 'thin' }, left: { style: 'thin' },
+        bottom: { style: 'thin' }, right: { style: 'thin' }
+      };
+      
+      // Default header background: yellow
+      cell.fill = fillColor('#facc15'); 
+
+      // If this column is a Sunday date column, make it red with white text
+      if (colNumber > 2 && colNumber <= 2 + daysInMonth) {
+        const dateColIndex = colNumber - 3;
+        if (dateColumns[dateColIndex].isSun) {
+          cell.fill = fillColor('#dc2626');
+          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        }
+      }
+    });
+  });
+
+  // Set Column Widths
+  ws.getColumn(1).width = 20;
+  ws.getColumn(2).width = 15;
+  for (let i = 1; i <= daysInMonth; i++) {
+    ws.getColumn(2 + i).width = 8;
+  }
+  for (let i = 0; i < 8; i++) {
+    ws.getColumn(sumStartCol + i).width = 10;
+  }
+
+  // Group records by employee
+  const recordMap = {};
+  data.records.forEach(r => {
+    if (!recordMap[r.employee_id]) recordMap[r.employee_id] = {};
+    recordMap[r.employee_id][r.date] = r;
+  });
+
+  // Add Data Rows
+  data.employees.forEach(emp => {
+    const empData = recordMap[emp.id] || {};
+    
+    const row1 = [emp.name, emp.role || ''];
+    const row2 = ['', 'Project'];
+    const row3 = ['', 'OT (Hrs)'];
+
+    let pCount = 0, aCount = 0, hCount = 0, woCount = 0, totalOt = 0;
+
+    dateColumns.forEach(c => {
+      let rData = empData[c.fullDate];
+      let status = rData ? rData.status : '';
+      let proj = rData && rData.project_name ? rData.project_name : '';
+      let ot = rData && rData.overtime_hours > 0 ? rData.overtime_hours : '';
+      
+      row1.push(status);
+      row2.push(proj);
+      row3.push(ot);
+      
+      if (status === 'P') pCount++;
+      else if (status === 'A') aCount++;
+      else if (status === 'H') hCount++;
+      else if (status === 'WO') woCount++;
+      
+      if (rData && rData.overtime_hours > 0) totalOt += rData.overtime_hours;
+    });
+
+    const totalPayable = pCount + woCount + (hCount * 0.5);
+    
+    // Add summaries
+    row1.push(daysInMonth, pCount, woCount, hCount, aCount, 0, totalPayable, totalOt);
+    
+    for(let i=0; i<8; i++) {
+        row2.push('');
+        row3.push('');
+    }
+
+    const r1 = ws.addRow(row1);
+    const r2 = ws.addRow(row2);
+    const r3 = ws.addRow(row3);
+    
+    // Merge EMP. Name and summaries vertically
+    ws.mergeCells(r1.number, 1, r3.number, 1);
+    
+    for (let i = 0; i < 8; i++) {
+        ws.mergeCells(r1.number, sumStartCol + i, r3.number, sumStartCol + i);
+    }
+    
+    // Style Data Rows
+    [r1, r2, r3].forEach((row, idx) => {
+      row.eachCell((cell, colNumber) => {
+        cell.border = {
+          top: { style: 'thin' }, left: { style: 'thin' },
+          bottom: { style: 'thin' }, right: { style: 'thin' }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        
+        if (colNumber > 2 && colNumber <= 2 + daysInMonth) {
+          const isSun = dateColumns[colNumber - 3].isSun;
+          if (isSun) {
+            cell.fill = fillColor('#dc2626');
+            cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          } else if (idx === 0) { // Only style status on the first row
+            const val = cell.value;
+            if (val === 'P') {
+              cell.fill = fillColor('#dcfce7'); // Light Green
+              cell.font = { color: { argb: 'FF166534' } }; // Dark Green
+            } else if (val === 'A') {
+              cell.fill = fillColor('#fee2e2'); // Light Red
+              cell.font = { color: { argb: 'FF991b1b' } }; // Dark Red
+            } else if (val === 'H') {
+              cell.fill = fillColor('#fef9c3'); // Light Yellow
+              cell.font = { color: { argb: 'FF854d0e' } }; // Dark Yellow
+            } else if (val === 'WO') {
+              cell.fill = fillColor('#dc2626'); // Red
+              cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            }
+          } else if (idx === 1) {
+            // Project row font size slightly smaller
+            cell.font = { size: 10 };
+          }
+        }
+      });
+    });
+    
+    // Left-align name
+    r1.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    
+    // Sub-row label styling
+    r2.getCell(2).alignment = { horizontal: 'right', vertical: 'middle' };
+    r2.getCell(2).font = { italic: true, color: { argb: 'FF666666' } };
+    r3.getCell(2).alignment = { horizontal: 'right', vertical: 'middle' };
+    r3.getCell(2).font = { italic: true, color: { argb: 'FF666666' } };
+  });
+
+  await wb.xlsx.writeFile(outputPath);
+}
+
+// ── Project Cost & Profitability Excel ──────────────────────────────────────
+async function generateProjectCostExcel(project, expenses, attendance, outputPath) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LocalPayroll';
+  const ws = wb.addWorksheet('Project Report');
+
+  ws.mergeCells('A1:E1');
+  const t1 = ws.getCell('A1');
+  t1.value = `Project Cost & Profitability Report — ${project.name}`;
+  t1.font  = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  t1.fill  = fillColor('#6366f1');
+  t1.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  ws.addRow([]);
+  ws.addRow(['Client Name', project.client_name || 'N/A']);
+  ws.addRow(['Project Code', project.code || 'N/A']);
+  ws.addRow(['Status', project.status]);
+  ws.addRow(['Expected Revenue (₹)', rupees(project.revenue || 0)]);
+  ws.addRow([]);
+
+  ws.addRow(['Expense Category', 'Amount (₹)', 'Date', 'Remarks', 'Status']);
+  ws.getRow(8).font = { bold: true };
+  let totExp = 0;
+  expenses.forEach(e => {
+    ws.addRow([e.category, rupees(e.amount), e.date, e.remarks || '-', e.status]);
+    if (e.status === 'approved') totExp += e.amount;
+  });
+  ws.addRow(['TOTAL APPROVED EXPENSES', rupees(totExp), '', '', '']).font = { bold: true };
+  
+  ws.addRow([]);
+  ws.addRow(['Labor / Manpower Summary']);
+  ws.getRow(ws.rowCount).font = { bold: true };
+  ws.addRow(['Date', 'Employee', 'Role', 'Status', 'OT (hrs)']);
+  ws.getRow(ws.rowCount).font = { bold: true };
+
+  attendance.forEach(a => {
+    ws.addRow([a.date, a.name, a.role || '-', a.status || '-', a.overtime_hours || 0]);
+  });
+
+  ws.columns = [
+    { width: 20 }, { width: 20 }, { width: 15 }, { width: 20 }, { width: 15 }
+  ];
+
+  await wb.xlsx.writeFile(outputPath);
+}
+
 module.exports = { 
   generateMonthlyExcel, 
   generateEmployeeExcel, 
   generateDailyAttendanceExcel,
-  generateAttendanceRangeExcel 
+  generateAttendanceRangeExcel,
+  generateAttendanceRegisterExcel,
+  generateProjectCostExcel
 };

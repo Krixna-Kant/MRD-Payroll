@@ -52,6 +52,12 @@ function registerIpcHandlers() {
   require('./src/ipc/reports')(ipcMain, () => mainWindow);
   require('./src/ipc/settings')(ipcMain);
   require('./src/ipc/backup')(ipcMain, () => mainWindow, dialog);
+  require('./src/ipc/staff_docs')(ipcMain);
+  require('./src/ipc/leaves')(ipcMain);
+  require('./src/ipc/expenses')(ipcMain);
+  require('./src/ipc/projects')(ipcMain);
+  require('./src/ipc/audit')(ipcMain);
+  require('./src/ipc/alerts')(ipcMain);
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────

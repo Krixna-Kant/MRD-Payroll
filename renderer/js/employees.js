@@ -57,6 +57,7 @@ const EmployeesPage = (() => {
                 <th>Phone</th>
                 <th>Role / Designation</th>
                 <th>Per Day Salary</th>
+                <th>Running Balance</th>
                 <th>Joining Date</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -77,6 +78,16 @@ const EmployeesPage = (() => {
                   <td class="td-muted">${Helpers.escapeHtml(e.phone || '—')}</td>
                   <td class="td-muted">${Helpers.escapeHtml(e.role || '—')}</td>
                   <td><span class="amount amount-success">${API.fmtRupees(e.salary)}</span></td>
+                  <td style="text-align:right">
+                    <div class="flex flex-col items-end">
+                      <span class="amount ${e.balance < 0 ? 'amount-danger' : (e.balance > 0 ? 'amount-success' : 'text-muted')} font-600">
+                         ${e.balance === 0 ? '₹0.00' : (e.balance < 0 ? '-' : '+') + API.fmtRupees(Math.abs(e.balance))}
+                      </span>
+                      <span class="text-xs ${e.balance < 0 ? 'text-danger' : (e.balance > 0 ? 'text-success' : 'text-muted')}" style="font-size:9px; font-weight:700; text-transform:uppercase; margin-top:2px">
+                         ${e.balance < 0 ? 'Advance' : (e.balance > 0 ? 'Pending' : 'Settled')}
+                      </span>
+                    </div>
+                  </td>
                   <td class="td-muted">${Helpers.formatDate(e.joining_date)}</td>
                   <td><span class="badge ${e.status === 'active' ? 'badge-success' : 'badge-muted'}">${e.status}</span></td>
                   <td>
@@ -185,6 +196,66 @@ const EmployeesPage = (() => {
           <input id="ef-notes" class="form-input" placeholder="Any additional information" value="${Helpers.escapeHtml(emp?.notes || '')}" />
         </div>
 
+        <div class="divider mt-4"></div>
+        <h4 class="text-sm font-700 mb-2 uppercase text-muted">Identity & Bank Details (Auto-filled by OCR)</h4>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Aadhaar Number</label>
+            <input id="ef-aadhaar" class="form-input" placeholder="XXXX XXXX XXXX" value="${Helpers.escapeHtml(emp?.aadhaar_no || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">PAN Number</label>
+            <input id="ef-pan" class="form-input" placeholder="ABCDE1234F" value="${Helpers.escapeHtml(emp?.pan_no || '')}" />
+          </div>
+        </div>
+        <div class="form-row mt-3">
+          <div class="form-group">
+            <label class="form-label">DOB</label>
+            <input id="ef-dob" class="form-input" placeholder="DD/MM/YYYY" value="${Helpers.escapeHtml(emp?.dob || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Gender</label>
+            <select id="ef-gender" class="form-select">
+              <option value="">Select</option>
+              <option value="Male"   ${emp?.gender === 'Male' ? 'selected' : ''}>Male</option>
+              <option value="Female" ${emp?.gender === 'Female' ? 'selected' : ''}>Female</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group mt-3">
+          <label class="form-label">Address</label>
+          <input id="ef-address" class="form-input" value="${Helpers.escapeHtml(emp?.address || '')}" />
+        </div>
+        <div class="form-row mt-3">
+          <div class="form-group">
+            <label class="form-label">Bank Name</label>
+            <input id="ef-bank-name" class="form-input" value="${Helpers.escapeHtml(emp?.bank_name || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Account Number</label>
+            <input id="ef-acc-no" class="form-input" value="${Helpers.escapeHtml(emp?.account_no || '')}" />
+          </div>
+        </div>
+        <div class="form-row mt-3">
+          <div class="form-group">
+            <label class="form-label">IFSC Code</label>
+            <input id="ef-ifsc" class="form-input" value="${Helpers.escapeHtml(emp?.ifsc_code || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Account Holder Name</label>
+            <input id="ef-acc-holder" class="form-input" value="${Helpers.escapeHtml(emp?.account_holder_name || '')}" />
+          </div>
+        </div>
+
+        ${!isEdit ? `
+        <div class="form-group mt-3">
+          <label class="form-label text-accent">Opening Balance (₹)</label>
+          <input id="ef-balance" type="number" class="form-input" placeholder="e.g. -2000 if they owe you" value="0" />
+          <div class="text-xs text-muted mt-1">Positive = Company owes employee, Negative = Employee owes company (Advance).</div>
+        </div>
+        ` : ''}
+
         <div id="ef-error" class="form-error mt-3" hidden></div>
       `,
       footer: `
@@ -213,6 +284,16 @@ const EmployeesPage = (() => {
       joiningDate:      document.getElementById('ef-joining').value,
       status:           document.getElementById('ef-status').value,
       notes:            document.getElementById('ef-notes').value.trim(),
+      aadhaar_no:       document.getElementById('ef-aadhaar').value.trim(),
+      pan_no:           document.getElementById('ef-pan').value.trim(),
+      dob:              document.getElementById('ef-dob').value.trim(),
+      gender:           document.getElementById('ef-gender').value,
+      address:          document.getElementById('ef-address').value.trim(),
+      bank_name:        document.getElementById('ef-bank-name').value.trim(),
+      account_no:       document.getElementById('ef-acc-no').value.trim(),
+      ifsc_code:        document.getElementById('ef-ifsc').value.trim(),
+      account_holder_name: document.getElementById('ef-acc-holder').value.trim(),
+      balance:          id ? 0 : (parseFloat(document.getElementById('ef-balance')?.value) || 0)
     };
 
     if (!data.name) { errEl.textContent = 'Employee name is required.'; errEl.hidden = false; return; }
@@ -253,17 +334,29 @@ const EmployeesPage = (() => {
           ${profileRow('📱 Phone', e.phone || '—')}
           ${profileRow('💰 Per Day Salary', API.fmtRupees(e.salary))}
           ${profileRow('📅 Joining Date', Helpers.formatDate(e.joining_date))}
+          <div class="card" style="padding:14px; border:2px solid ${e.balance < 0 ? 'var(--danger-subtle)' : 'var(--success-subtle)'}">
+             <div class="text-xs text-muted">Running Balance</div>
+             <div class="font-700 amount ${e.balance < 0 ? 'amount-danger' : (e.balance > 0 ? 'amount-success' : 'text-muted')}" style="font-size:1.1rem; margin-top:4px">
+                ${e.balance === 0 ? '₹0.00' : (e.balance < 0 ? '-' : '+') + API.fmtRupees(Math.abs(e.balance))}
+             </div>
+             <div class="text-xs font-700 mt-1" style="text-transform:uppercase; color:${e.balance < 0 ? 'var(--danger)' : (e.balance > 0 ? 'var(--success)' : 'var(--text-muted)')}">
+                ${e.balance < 0 ? 'Employee owes (Advance)' : (e.balance > 0 ? 'Company owes (Pending)' : 'Settled')}
+             </div>
+             <button class="btn btn-sm btn-ghost mt-2" id="vw-adj-bal" style="padding:0; font-size:10px; color:var(--accent)">Adjust Balance</button>
+          </div>
         </div>
         <div style="margin-top:20px;margin-bottom:20px">
           ${profileRow('📝 Notes', e.notes || '—')}
         </div>
         <div class="divider"></div>
         <div class="flex gap-2">
-          <button class="btn btn-secondary" id="vw-att"  data-id="${e.id}">View Attendance</button>
-          <button class="btn btn-secondary" id="vw-adv"  data-id="${e.id}">View Advances</button>
-          <button class="btn btn-secondary" id="vw-pay"  data-id="${e.id}">View Payments</button>
+          <button class="btn btn-secondary" id="vw-att"  data-id="${e.id}">Attendance</button>
+          <button class="btn btn-secondary" id="vw-adv"  data-id="${e.id}">Advances</button>
+          <button class="btn btn-secondary" id="vw-pay"  data-id="${e.id}">Payments</button>
+          <button class="btn btn-secondary" id="vw-docs" data-id="${e.id}">📁 Docs</button>
+          <button class="btn btn-accent"    id="vw-ledger" data-id="${e.id}">📜 Ledger</button>
           <button class="btn btn-secondary" id="vw-excel" data-id="${e.id}" style="margin-left:auto">
-            📊 Export Excel
+            Excel
           </button>
         </div>
       `,
@@ -278,9 +371,100 @@ const EmployeesPage = (() => {
     document.getElementById('vw-att')?.addEventListener('click',  () => { Modal.close(); AppState.set('selectedEmployeeId', e.id); Router.navigate('attendance'); });
     document.getElementById('vw-adv')?.addEventListener('click',  () => { Modal.close(); AppState.set('selectedEmployeeId', e.id); Router.navigate('advances'); });
     document.getElementById('vw-pay')?.addEventListener('click',  () => { Modal.close(); AppState.set('selectedEmployeeId', e.id); Router.navigate('payments'); });
+    document.getElementById('vw-docs')?.addEventListener('click', () => { Modal.close(); AppState.set('selectedEmployeeId', e.id); Router.navigate('staff-docs'); });
     document.getElementById('vw-excel')?.addEventListener('click', async () => {
       const r = await API.exportEmployeeExcel(e.id);
       if (r.success) Toast.success('Excel exported!'); else if (r.error !== 'Cancelled.') Toast.error(r.error);
+    });
+    document.getElementById('vw-ledger')?.addEventListener('click', () => { Modal.close(); openLedgerModal(e); });
+    document.getElementById('vw-adj-bal')?.addEventListener('click', () => { Modal.close(); openAdjustBalanceModal(e); });
+  }
+
+  // ── Ledger Modal ──────────────────────────────────────────────────────────
+  async function openLedgerModal(emp) {
+    Modal.open({
+      title: `Ledger — ${emp.name}`,
+      size: 'modal-lg',
+      body: `<div id="ledger-content" class="p-4"><div class="loader"></div></div>`,
+      footer: `<button class="btn btn-secondary" onclick="Modal.close()">Close</button>`
+    });
+
+    const res = await API.getLedger(emp.id);
+    const content = document.getElementById('ledger-content');
+    
+    if (!res.success) { content.innerHTML = `<p class="text-danger">${res.error}</p>`; return; }
+    
+    const history = res.history || [];
+    if (history.length === 0) {
+      content.innerHTML = `<div class="empty-state">No transactions found for this employee.</div>`;
+      return;
+    }
+
+    content.innerHTML = `
+      <div class="table-wrap">
+        <table style="font-size:0.9rem">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Balance</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${history.map(t => `
+              <tr>
+                <td>${Helpers.formatDate(t.date)}</td>
+                <td><span class="badge badge-muted">${t.type}</span></td>
+                <td class="amount ${t.amount < 0 ? 'amount-danger' : 'amount-success'}">
+                   ${t.amount < 0 ? '-' : '+'}${API.fmtRupees(Math.abs(t.amount))}
+                </td>
+                <td class="amount font-600">${API.fmtRupees(t.running_balance)}</td>
+                <td class="text-xs text-muted">${Helpers.escapeHtml(t.notes || '')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // ── Adjust Balance Modal ──────────────────────────────────────────────────
+  function openAdjustBalanceModal(emp) {
+    Modal.open({
+      title: `Adjust Balance — ${emp.name}`,
+      body: `
+        <div class="form-group">
+          <label class="form-label">Adjustment Amount (₹)</label>
+          <input id="adj-amount" type="number" class="form-input" placeholder="e.g. 500 or -500" />
+          <div class="text-xs text-muted mt-1">Positive to increase balance, Negative to decrease (add advance).</div>
+        </div>
+        <div class="form-group mt-3">
+          <label class="form-label">Notes</label>
+          <input id="adj-notes" class="form-input" placeholder="Reason for adjustment" />
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-secondary" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" id="adj-save">Apply Adjustment</button>
+      `
+    });
+
+    document.getElementById('adj-save').addEventListener('click', async () => {
+      const amount = parseFloat(document.getElementById('adj-amount').value) || 0;
+      const notes = document.getElementById('adj-notes').value;
+      
+      if (amount === 0) { Modal.close(); return; }
+
+      const res = await API.updateBalance({ employeeId: emp.id, amount, notes });
+      if (res.success) {
+        Toast.success('Balance adjusted.');
+        Modal.close();
+        load();
+      } else {
+        Toast.error(res.error);
+      }
     });
   }
 

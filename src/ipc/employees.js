@@ -30,31 +30,74 @@ module.exports = function registerEmployeeHandlers(ipcMain) {
   // ── Get Single Employee ───────────────────────────────────────────────────
   ipcMain.handle('employees:getOne', async (_, id) => {
     const db = getDB();
-    const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
+    const employee = db.prepare(`
+      SELECT *, 
+             (SELECT COALESCE(SUM(amount), 0) FROM advances WHERE employee_id = e.id) as total_advances,
+             balance
+      FROM employees e
+      WHERE id = ?
+    `).get(id);
     if (!employee) return { success: false, error: 'Employee not found.' };
     return { success: true, employee };
   });
 
   // ── Create Employee ───────────────────────────────────────────────────────
   // salary comes in as PAISA from the renderer (renderer converts ₹ → paisa before calling)
-  ipcMain.handle('employees:create', async (_, emp) => {
+  ipcMain.handle('employees:create', async (_, data) => {
     const db = getDB();
-    if (!emp.name || !emp.name.trim()) return { success: false, error: 'Employee name is required.' };
+    const { name, phone, role, salary, joiningDate, notes, balance } = data;
+    
+    if (!name || !name.trim()) return { success: false, error: 'Employee name is required.' };
 
-    const result = db.prepare(`
-      INSERT INTO employees (name, phone, role, salary, fixed_gross_salary, joining_date, status, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      emp.name.trim(),
-      emp.phone || null,
-      emp.role  || null,
-      emp.salary || 0,
-      emp.fixedGrossSalary || 0,
-      emp.joiningDate || null,
-      emp.status || 'active',
-      emp.notes || null
-    );
-    return { success: true, employeeId: result.lastInsertRowid };
+    const transaction = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO employees (name, phone, role, salary, joining_date, notes, balance)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(name.trim(), phone || null, role || null, salary || 0, joiningDate || null, notes || null, balance || 0);
+
+      const empId = result.lastInsertRowid;
+
+      if (balance !== 0) {
+        db.prepare(`
+          INSERT INTO ledger (employee_id, type, amount, running_balance, date, notes)
+          VALUES (?, 'OPENING', ?, ?, ?, ?)
+        `).run(empId, balance, balance, new Date().toISOString().split('T')[0], 'Opening Balance at creation');
+      }
+
+      return empId;
+    });
+
+    try {
+      const employeeId = transaction();
+      return { success: true, employeeId };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Update Employee Balance (Manual Adjustment) ───────────────────────────
+  ipcMain.handle('employees:updateBalance', async (_, { employeeId, amount, notes }) => {
+    const db = getDB();
+    const employee = db.prepare('SELECT id, balance FROM employees WHERE id = ?').get(employeeId);
+    if (!employee) return { success: false, error: 'Employee not found.' };
+
+    const newBalance = employee.balance + amount;
+    
+    const transaction = db.transaction(() => {
+      db.prepare('UPDATE employees SET balance = ? WHERE id = ?').run(newBalance, employeeId);
+      
+      db.prepare(`
+        INSERT INTO ledger (employee_id, type, amount, running_balance, date, notes)
+        VALUES (?, 'ADJUSTMENT', ?, ?, ?, ?)
+      `).run(employeeId, amount, newBalance, new Date().toISOString().split('T')[0], notes || 'Manual Balance Adjustment');
+    });
+
+    try {
+      transaction();
+      return { success: true, newBalance };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   // ── Update Employee ───────────────────────────────────────────────────────

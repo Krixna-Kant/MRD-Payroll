@@ -118,14 +118,14 @@ const Modal = (() => {
     if (e.target === document.getElementById('global-modal-overlay')) close();
   });
 
-  function confirm(message, onConfirm, { title = 'Confirm', danger = false } = {}) {
+  function confirm(message, onConfirm, { title = 'Confirm', danger = false, confirmText = 'Confirm', cancelText = 'Cancel' } = {}) {
     open({
       title,
       size: 'modal-sm',
       body: `<p style="font-size:0.9rem;line-height:1.6">${message}</p>`,
       footer: `
-        <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
-        <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="modal-confirm-btn">Confirm</button>
+        <button class="btn btn-secondary" id="modal-cancel-btn">${cancelText}</button>
+        <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="modal-confirm-btn">${confirmText}</button>
       `
     });
     document.getElementById('modal-cancel-btn').addEventListener('click', close);
@@ -145,30 +145,49 @@ const Router = (() => {
   const PAGE_META = {
     dashboard:  { title: 'Dashboard',  sub: 'Overview of your payroll'        },
     employees:  { title: 'Employees',  sub: 'Manage your team'                },
+    projects:   { title: 'Projects',   sub: 'Project master & tracking'       },
+    project_dashboard: { title: 'Project Dashboard', sub: ''                  },
     attendance: { title: 'Attendance', sub: 'Track daily attendance'          },
     advances:   { title: 'Advances',   sub: 'Salary advance ledger'           },
     payments:   { title: 'Payments',   sub: 'Salary payments & payslips'      },
     reports:    { title: 'Reports',    sub: 'Export PDF & Excel reports'      },
-    settings:   { title: 'Settings',   sub: 'Configure app & backup data'     },
+    activity:   { title: 'Activity Log', sub: 'System audit trail & user actions' },
+    alerts:     { title: 'Alerts & Reminders', sub: 'Smart operational monitoring center' },
+    leaves:     { title: 'Leave Management', sub: 'Employee leave requests & approvals' },
+    expenses:   { title: 'Expense Claims', sub: 'Project & travel expense reimbursements' },
+    'staff-docs': { title: 'Staff Documents', sub: 'Employee identity & compliance' },
+    settings:   { title: 'Settings',   sub: 'Configure app & data'            },
   };
 
   const MODULES = {
     dashboard:  () => DashboardPage.init(),
     employees:  () => EmployeesPage.init(),
+    projects:   (params) => ProjectsPage.init(params),
+    project_dashboard: (params) => ProjectDashboardPage.init(params),
     attendance: () => AttendancePage.init(),
     advances:   () => AdvancesPage.init(),
     payments:   () => PaymentsPage.init(),
     reports:    () => ReportsPage.init(),
+    activity:   () => ActivityLogsPage.init(),
+    alerts:     () => AlertsPage.init(),
+    leaves:     () => LeavesPage.init(),
+    expenses:   () => ExpensesPage.init(),
+    'staff-docs': () => StaffDocsPage.init(),
     settings:   () => SettingsPage.init(),
   };
 
-  function navigate(page) {
+  function navigate(page, params = {}) {
     if (!MODULES[page]) return;
     AppState.set('page', page);
 
     // Update active nav item
     document.querySelectorAll('.nav-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.page === page);
+      // Don't highlight nav item if we are on a hidden sub-page, unless we map it
+      if (page === 'project_dashboard' && el.dataset.page === 'projects') {
+        el.classList.add('active');
+      } else {
+        el.classList.toggle('active', el.dataset.page === page);
+      }
     });
 
     // Show correct page section
@@ -183,7 +202,7 @@ const Router = (() => {
     document.getElementById('page-header-actions').innerHTML = '';
 
     // Init the page module
-    MODULES[page]?.();
+    MODULES[page]?.(params);
   }
 
   function init() {

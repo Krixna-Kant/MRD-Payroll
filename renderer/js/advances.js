@@ -14,7 +14,20 @@ const AdvancesPage = (() => {
 
   // ── Init ──────────────────────────────────────────────────────────────────
   async function init() {
-    // Clear preselection
+    // Check if we came from Dashboard with a clear filter request
+    if (sessionStorage.getItem('advances_clear_filter') === 'true') {
+      sessionStorage.removeItem('advances_clear_filter');
+      _filterMonth = null;
+      _filterYear = null;
+      _filterEmp = '';
+    } else {
+      // Default to current state
+      _filterMonth = AppState.get('currentMonth');
+      _filterYear = AppState.get('currentYear');
+      _filterEmp = AppState.get('selectedEmployeeId') || '';
+    }
+
+    // Clear preselection for next time
     AppState.set('selectedEmployeeId', null);
 
     headerActs().innerHTML = `
@@ -217,6 +230,48 @@ const AdvancesPage = (() => {
     Toast.success('Advance recorded successfully!');
     await load();
     EventBus.emit('data:refresh');
+
+    // Trigger WhatsApp notification (async)
+    triggerWhatsApp(empId, amount, date);
+  }
+
+  async function triggerWhatsApp(empId, amountRupees, dateIso) {
+    const empRes = await API.getEmployee(empId);
+    if (!empRes.success) return;
+    const emp = empRes.employee;
+    if (!emp.phone) return;
+
+    const settingsRes = await API.getSettings();
+    const settings = settingsRes.settings || {};
+    const companyName = settings.company_name || 'MRD Electric';
+
+    const dateStr = Helpers.formatDate(dateIso);
+    
+    // Balance calculation
+    const bal = emp.balance || 0;
+    const balFormatted = bal === 0 ? '₹0.00' : (bal < 0 ? '-' : '+') + API.fmtRupees(Math.abs(bal));
+    const balType = bal < 0 ? 'Advance' : (bal > 0 ? 'Pending' : 'Settled');
+
+    const msg = `Hello ${emp.name},
+
+💰 Advance Amount: ₹${parseFloat(amountRupees).toLocaleString('en-IN')}
+📅 Date: ${dateStr}
+
+This amount has been recorded in your account.
+Current Balance: ${balFormatted} (${balType})
+
+— ${companyName}`;
+
+    Modal.confirm(
+      `Send WhatsApp notification to <strong>${Helpers.escapeHtml(emp.name)}</strong>?`,
+      () => {
+        let phone = emp.phone.replace(/\D/g, '');
+        if (phone.length === 10) phone = '91' + phone;
+        const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+        window.open(url, '_blank');
+      },
+      { title: 'WhatsApp Notification', confirmText: 'Yes, Send', cancelText: 'No, Skip' }
+    );
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────────

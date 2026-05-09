@@ -12,7 +12,6 @@ module.exports = function registerPaymentHandlers(ipcMain) {
 
   // ── INTERNAL HELPER: Calculate single salary ──────────────────────────────
   function calculateSalaryCore(db, empId, employee, month, year) {
-    const useAttendanceSetting = db.prepare(`SELECT value FROM settings WHERE key = 'use_attendance_for_salary'`).get();
     const useAttendance = true; // Forced true for this model
 
     const monthStr = String(month).padStart(2, '0');
@@ -24,14 +23,13 @@ module.exports = function registerPaymentHandlers(ipcMain) {
 
     const stats = processMonthlyAttendanceStats(db, empId, effectiveStart, end);
 
-    const monthlySalary = employee.salary; // Input is now Monthly Salary
+    const monthlySalary = employee.salary; 
     
     // Step 1: PerDay = Monthly / 30
     const perDay = Math.round(monthlySalary / 30);
     const hourlyRate = Math.round(perDay / 8);
 
-    // Step 2: AttendanceTotal = (P × PerDay) + (H × 0.5 × PerDay) + (WO × PerDay)
-    // Formula: Present = Full, WO = Full, Half Day (H) = Half
+    // Step 2: AttendanceTotal
     const pAmount = Math.round(stats.P * perDay);
     const hAmount = Math.round(stats.H * 0.5 * perDay);
     const woAmount = Math.round(stats.WO * perDay);
@@ -40,45 +38,51 @@ module.exports = function registerPaymentHandlers(ipcMain) {
     // effectiveSalary is strictly attendanceTotal in this model
     const effectiveSalary = attendanceTotal;
 
-    // Step 3: OT Amount = OT Hours × Hourly Rate
+    // Step 3: OT Amount
     const totalOvertimeHours = stats.totalOvertimeHours;
     const overtimePay = Math.round(totalOvertimeHours * hourlyRate);
 
+    // Fetch existing payment to check if we should show live or saved data
     const existingPayment = db.prepare(`SELECT * FROM payments WHERE employee_id = ? AND month = ? AND year = ?`).get(empId, month, year);
 
-    const allAdvRows = db.prepare(`SELECT amount, notes, date FROM advances WHERE employee_id = ? AND month = ? AND year = ?`).all(empId, month, year);
-    let manualAdvances = 0;
-    let prevMonthDues = 0;
-    const advanceList = allAdvRows.map(a => {
-      const isSystem = a.notes && a.notes.startsWith('[SYSTEM]');
-      if (isSystem) prevMonthDues += a.amount;
-      else manualAdvances += a.amount;
-      
-      const sourceDate = new Date(a.date);
-      const sourceMonthName = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(sourceDate);
-      
-      return {
-        amount: a.amount,
-        notes: a.notes,
-        isSystem,
-        sourceMonth: sourceMonthName
-      };
-    });
+    // LIVE calculation (for preview)
+    const liveStats = stats;
+    // Determine final values: Use saved record if it exists, otherwise use live calculation
+    // NEW: Fetch pending approved expenses (that fall within or before this month)
+    const unReimbursedExpenses = existingPayment 
+      ? existingPayment.reimbursed_expenses 
+      : db.prepare(`
+          SELECT COALESCE(SUM(amount), 0) as total FROM expenses
+          WHERE employee_id = ? AND status = 'approved' AND payment_id IS NULL AND date <= ?
+        `).get(empId, end).total;
 
-    const advanceTotal = existingPayment ? existingPayment.advance_deducted : (manualAdvances + prevMonthDues);
+    const liveSalaryEarned = effectiveSalary + overtimePay + unReimbursedExpenses;
+    const liveNetPayable = (employee.balance || 0) + liveSalaryEarned;
 
-    // Allowances strictly manual default 0
+    const salaryEarned = existingPayment ? (existingPayment.salary_earned || 0) : (liveSalaryEarned + (existingPayment ? existingPayment.food_allowance + existingPayment.travel_allowance : 0));
+    const openingBalance = existingPayment ? (existingPayment.opening_balance || 0) : (employee.balance || 0);
+    const netPayable = existingPayment ? (openingBalance + (existingPayment.salary_earned || 0) - (existingPayment.other_deductions || 0)) : liveNetPayable;
+
+    // Mismatch detection: Does live attendance match what was saved?
+    const isMismatch = existingPayment && (
+       existingPayment.present_days !== liveStats.P || 
+       existingPayment.half_days !== liveStats.H || 
+       existingPayment.wo_days !== liveStats.WO
+    );
+
+    // Allowances
     const foodAllowance = existingPayment ? existingPayment.food_allowance : 0;
     const travelAllowance = existingPayment ? existingPayment.travel_allowance : 0;
-    const pendingDeductions = existingPayment ? existingPayment.other_deductions : 0;
+    const otherDeductions = existingPayment ? existingPayment.other_deductions : 0;
 
-    // Step 4: Gross = AttendanceTotal + OT + Food + Travel
-    const grossEarnings = effectiveSalary + overtimePay + foodAllowance + travelAllowance;
+    // NEW LEDGER LOGIC:
+    let recoverableAmount = 0;
+    if (openingBalance < 0 && salaryEarned > 0) {
+      recoverableAmount = Math.min(Math.abs(openingBalance), salaryEarned);
+    }
 
-    // Step 5: Net = Gross − Advance − Pending
-    const netPayable = Math.max(0, grossEarnings - advanceTotal - pendingDeductions);
+    const adjustedSalary = salaryEarned - recoverableAmount;
     
-    // Step 6: Payment Adjustment
     const suggestedPaidAmount = netPayable;
 
     return {
@@ -86,7 +90,6 @@ module.exports = function registerPaymentHandlers(ipcMain) {
       employeeName:    employee.name,
       employeeRole:    employee.role,
       grossSalary:     monthlySalary,
-      fixedGrossSalary: 0,
       attendanceDays:  stats.effectiveDays,
       totalDays:       30,
       presentDays:     stats.P,
@@ -98,21 +101,18 @@ module.exports = function registerPaymentHandlers(ipcMain) {
       totalOvertimeHours,
       hourlyRate,
       overtimePay,
-      sundayWorkDays:  stats.sundayWorkDays,
-      sundayMultiplier: 1,
-      sundayBonus:     0,
       foodAllowance,
       travelAllowance,
-      advanceDeducted: advanceTotal,
-      manualAdvances,
-      prevMonthDues,
-      advanceList,
-      prevMonthName: (new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(year, (month - 2), 1))),
-      otherDeductions: pendingDeductions,
+      otherDeductions,
+      openingBalance,
+      salaryEarned,
+      recoverableAmount,
+      adjustedSalary,
       netPayable,
-      suggestedPaidAmount,
-      totalEarnings:   grossEarnings,
+      totalEarnings:   salaryEarned,
+      reimbursedExpenses: unReimbursedExpenses,
       existingPayment: existingPayment || null,
+      isMismatch
     };
   }
 
@@ -160,27 +160,28 @@ module.exports = function registerPaymentHandlers(ipcMain) {
       employeeId, month, year, grossSalary, attendanceDays,
       totalDays, useAttendance, effectiveSalary, advanceDeducted,
       otherDeductions, foodAllowance, travelAllowance,
-      totalEarnings, paidAmount, mode, paymentDate, notes, status, createdBy,
-      presentDays, halfDays, absentDays, woDays, overtimeHours, overtimePay
+      paidAmount, mode, paymentDate, notes, status, createdBy,
+      presentDays, halfDays, absentDays, woDays, overtimeHours, overtimePay,
+      salaryEarned, reimbursedExpenses
     } = data;
 
-    const netPayable = (data.netPayable || 0); // This was passed from the modal calculation
-    let carryForwardAdvance = paidAmount - netPayable;
-    
-    // We treat the "paidAmount" as the literal "net_paid" column 
+    const employee = db.prepare('SELECT balance FROM employees WHERE id = ?').get(employeeId);
+    if (!employee) return { success: false, error: 'Employee not found.' };
+
     const netPaid = paidAmount || 0;
 
-    // Enable transaction for safety since we modify multiple tables
     const transaction = db.transaction(() => {
-      // 1. Upsert Payment
+      // 1. Record/Update Payment
+      // CRITICAL: We use COALESCE to ensure opening_balance is ONLY set on initial INSERT
       const result = db.prepare(`
         INSERT INTO payments
           (employee_id, month, year, gross_salary, attendance_days, total_days,
            use_attendance, effective_salary, advance_deducted, other_deductions,
            food_allowance, travel_allowance,
            net_paid, mode, payment_date, notes, status, created_by,
-           present_days, half_days, absent_days, wo_days, overtime_hours, overtime_pay)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           present_days, half_days, absent_days, wo_days, overtime_hours, overtime_pay,
+           salary_earned, reimbursed_expenses, opening_balance)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(employee_id, month, year) DO UPDATE SET
           gross_salary     = excluded.gross_salary,
           attendance_days  = excluded.attendance_days,
@@ -201,49 +202,58 @@ module.exports = function registerPaymentHandlers(ipcMain) {
           absent_days      = excluded.absent_days,
           wo_days          = excluded.wo_days,
           overtime_hours   = excluded.overtime_hours,
-          overtime_pay     = excluded.overtime_pay
+          overtime_pay     = excluded.overtime_pay,
+          salary_earned    = excluded.salary_earned,
+          reimbursed_expenses = excluded.reimbursed_expenses
+          -- Note: opening_balance is NOT updated here to preserve historical accuracy
       `).run(
         employeeId, month, year, grossSalary, attendanceDays, totalDays,
         useAttendance ? 1 : 0, effectiveSalary, advanceDeducted || 0,
         otherDeductions || 0, foodAllowance || 0, travelAllowance || 0,
         netPaid, mode || 'Cash', paymentDate || null,
         notes || null, status || 'paid', createdBy || null,
-        presentDays || 0, halfDays || 0, absentDays || 0, woDays || 0, overtimeHours || 0, overtimePay || 0
+        presentDays || 0, halfDays || 0, absentDays || 0, woDays || 0, overtimeHours || 0, overtimePay || 0,
+        salaryEarned || 0, reimbursedExpenses || 0, employee.balance
       );
 
-      // 2. Handle Advance Carry Forward
-      const nextMonth = month === 12 ? 1 : month + 1;
-      const nextYear  = month === 12 ? year + 1 : year;
-      const sysNote   = `[SYSTEM] Carry forward from ${month}/${year}`;
+      const paymentId = result.lastInsertRowid || db.prepare('SELECT id FROM payments WHERE employee_id=? AND month=? AND year=?').get(employeeId, month, year).id;
 
-      // Always clear any previous carry-forward generated for next month to avoid duplicates
-      db.prepare(`
-        DELETE FROM advances 
-        WHERE employee_id = ? AND month = ? AND year = ? AND notes LIKE ?
-      `).run(employeeId, nextMonth, nextYear, '[SYSTEM]%');
-
-      // If there is advance to carry forward, insert it
-      if (typeof carryForwardAdvance === 'number' && carryForwardAdvance !== 0) {
-        const customNote = carryForwardAdvance > 0 
-            ? `[SYSTEM] Carry forward advance from ${month}/${year}` 
-            : `[SYSTEM] Pending arrears from ${month}/${year}`;
-
+      // 1.5 Update expenses to link to this payment if this is a newly created payment or we are adding to it
+      if (reimbursedExpenses > 0) {
+        const monthStr = String(month).padStart(2, '0');
+        const end = `${year}-${monthStr}-31`;
         db.prepare(`
-          INSERT INTO advances (employee_id, amount, mode, date, month, year, notes, created_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          employeeId,
-          carryForwardAdvance,
-          'Cash', // default mode for systemic carry forward
-          paymentDate || new Date().toISOString().split('T')[0], // Use today's date
-          nextMonth,
-          nextYear,
-          customNote,
-          createdBy || null
-        );
+          UPDATE expenses SET payment_id = ?
+          WHERE employee_id = ? AND status = 'approved' AND payment_id IS NULL AND date <= ?
+        `).run(paymentId, employeeId, end);
       }
 
-      return result.lastInsertRowid;
+      // 2. Update Employee Balance: New Balance = Old + SalaryEarned - NetPaid - Deductions
+      const finalBalanceChange = (salaryEarned || 0) - netPaid - (otherDeductions || 0);
+      const newBalance = employee.balance + finalBalanceChange;
+
+      db.prepare('UPDATE employees SET balance = ?, updated_at = (strftime(\'%s\', \'now\')) WHERE id = ?')
+        .run(newBalance, employeeId);
+
+      // 3. Record in Ledger
+      if ((salaryEarned || 0) > 0) {
+        db.prepare(`
+          INSERT INTO ledger (employee_id, type, amount, running_balance, date, month, year, notes, reference_id)
+          VALUES (?, 'SALARY', ?, ?, ?, ?, ?, ?, ?)
+        `).run(employeeId, salaryEarned, employee.balance + salaryEarned, paymentDate, month, year, `Salary for ${month}/${year}`, paymentId);
+      }
+
+      // Record payment even if 0 (e.g., full recovery) for audit trail
+      db.prepare(`
+        INSERT INTO ledger (employee_id, type, amount, running_balance, date, month, year, notes, reference_id)
+        VALUES (?, 'PAYMENT', ?, ?, ?, ?, ?, ?, ?)
+      `).run(employeeId, -netPaid, newBalance, paymentDate, month, year, `Salary Payment/Recovery for ${month}/${year}`, paymentId);
+
+      // Audit Log
+      const { logActivity } = require('../utils/audit');
+      logActivity('Payroll', 'Processed', `Processed salary for ${employee.name} (${month}/${year})`, null, `Net Paid: ${netPaid / 100}`);
+
+      return paymentId;
     });
 
     try {
@@ -255,37 +265,32 @@ module.exports = function registerPaymentHandlers(ipcMain) {
     }
   });
 
-  // ── Update Payment ─────────────────────────────────────────────────────────
-  ipcMain.handle('payments:update', async (_, id, data) => {
-    const db = getDB();
-    const existing = db.prepare('SELECT id FROM payments WHERE id = ?').get(id);
-    if (!existing) return { success: false, error: 'Payment not found.' };
-
-    db.prepare(`
-      UPDATE payments SET
-        status = ?, mode = ?, payment_date = ?, notes = ?, net_paid = ?
-      WHERE id = ?
-    `).run(data.status, data.mode, data.paymentDate, data.notes, data.netPaid, id);
-    return { success: true };
-  });
-
   // ── Delete Payment ─────────────────────────────────────────────────────────
   ipcMain.handle('payments:delete', async (_, id) => {
     const db = getDB();
-    const payment = db.prepare('SELECT employee_id, month, year FROM payments WHERE id = ?').get(id);
+    const payment = db.prepare('SELECT * FROM payments WHERE id = ?').get(id);
     if (!payment) return { success: false, error: 'Payment not found.' };
+
+    const employee = db.prepare('SELECT balance FROM employees WHERE id = ?').get(payment.employee_id);
 
     const transaction = db.transaction(() => {
       // 1. Delete the payment record
       db.prepare('DELETE FROM payments WHERE id = ?').run(id);
 
-      // 2. Delete generated carry-forward for NEXT month
-      const nextMonth = payment.month === 12 ? 1 : payment.month + 1;
-      const nextYear  = payment.month === 12 ? payment.year + 1 : payment.year;
+      // Revert expenses linked to this payment
+      db.prepare('UPDATE expenses SET payment_id = NULL WHERE payment_id = ?').run(id);
+
+      // 2. Revert Balance: Subtract salary, add back net_paid and other_deductions
+      const salaryImpact = (payment.effective_salary || 0) + (payment.overtime_pay || 0) + (payment.food_allowance || 0) + (payment.travel_allowance || 0);
+      const revertedBalance = (employee ? employee.balance : 0) - salaryImpact + (payment.net_paid || 0) + (payment.other_deductions || 0);
+
+      db.prepare('UPDATE employees SET balance = ? WHERE id = ?').run(revertedBalance, payment.employee_id);
+
+      // 3. Ledger adjustment
       db.prepare(`
-        DELETE FROM advances 
-        WHERE employee_id = ? AND month = ? AND year = ? AND notes LIKE ?
-      `).run(payment.employee_id, nextMonth, nextYear, '[SYSTEM]%');
+        INSERT INTO ledger (employee_id, type, amount, running_balance, date, notes, reference_id)
+        VALUES (?, 'ADJUSTMENT', ?, ?, ?, ?, ?)
+      `).run(payment.employee_id, -salaryImpact + payment.net_paid, revertedBalance, new Date().toISOString().split('T')[0], `Reversal of Payment ID: ${id}`, id);
     });
 
     try {
@@ -294,6 +299,17 @@ module.exports = function registerPaymentHandlers(ipcMain) {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // ── Get Ledger for Employee ────────────────────────────────────────────────
+  ipcMain.handle('ledger:get', async (_, employeeId) => {
+    const db = getDB();
+    const history = db.prepare(`
+      SELECT * FROM ledger 
+      WHERE employee_id = ? 
+      ORDER BY date DESC, id DESC
+    `).all(employeeId);
+    return { success: true, history };
   });
 
 };

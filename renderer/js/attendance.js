@@ -73,8 +73,24 @@ const AttendancePage = (() => {
           <span class="text-muted text-sm badge badge-muted" id="att-bulk-count" style="margin-left:8px"></span>
         </div>
         <div class="toolbar-right">
-          <button id="att-export-excel" class="btn btn-primary">
-            <span class="btn-text">Data Export 📊</span>
+          <button id="att-export-daily-pdf" class="btn btn-secondary">
+            <span class="btn-text">📄 Daily Manpower PDF</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+          <button id="att-share-whatsapp" class="btn btn-success" style="margin-left:8px">
+            <span class="btn-text">💬 Share to WhatsApp</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+          <button id="att-send-all-wa" class="btn btn-success" style="margin-left:8px;background:linear-gradient(135deg,#25D366,#128C7E)">
+            <span class="btn-text">📲 Send All WA</span>
+          </button>
+          <button id="att-export-register-excel-bulk" class="btn btn-primary" style="margin-left:8px">
+            <span class="btn-text">📊 Monthly Excel</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+          <button id="att-export-register-pdf-bulk" class="btn btn-secondary" style="margin-left:8px">
+            <span class="btn-text">📄 Monthly PDF</span>
+            <span class="btn-loader" hidden></span>
           </button>
         </div>
       </div>
@@ -118,81 +134,83 @@ const AttendancePage = (() => {
       initBulk();
     });
 
-    document.getElementById('att-export-excel').addEventListener('click', async () => {
-      const empRes = await API.getEmployees({ status: 'active' });
-      const employees = empRes.employees || [];
-      const today = Helpers.todayIso();
-      const firstOfMonth = `${today.substring(0, 8)}01`;
-
-      Modal.open({
-        title: 'Export Attendance Report',
-        size: 'modal-md',
-        body: `
-          <div class="form-group mb-4">
-            <label class="form-label">Date Range</label>
-            <div class="flex gap-2">
-              <input type="date" id="exp-start-date" class="form-input" value="${firstOfMonth}" />
-              <div class="flex items-center">to</div>
-              <input type="date" id="exp-end-date" class="form-input" value="${today}" />
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label flex justify-between">
-              <span>Select Employees</span>
-              <label class="text-xs flex items-center gap-1 cursor-pointer" style="font-weight:400">
-                <input type="checkbox" id="exp-select-all" checked /> Select All
-              </label>
-            </label>
-            <div id="exp-emp-list" class="card" style="max-height:200px; overflow-y:auto; padding:8px; background:var(--bg-subtle)">
-              ${employees.map(e => `
-                <label class="flex items-center gap-2 p-1 hover-dim cursor-pointer" style="font-size:0.9rem">
-                  <input type="checkbox" class="exp-emp-check" value="${e.id}" checked />
-                  <span>${Helpers.escapeHtml(e.name)}</span>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-        `,
-        footer: `
-          <button class="btn btn-secondary" id="exp-cancel">Cancel</button>
-          <button class="btn btn-primary" id="exp-run">
-            <span class="btn-text">Download Excel 📊</span>
-            <span class="btn-loader" hidden></span>
-          </button>
-        `
-      });
-
-      const selectAll = document.getElementById('exp-select-all');
-      const checks = document.querySelectorAll('.exp-emp-check');
-      
-      selectAll.addEventListener('change', () => {
-        checks.forEach(c => c.checked = selectAll.checked);
-      });
-
-      document.getElementById('exp-cancel').addEventListener('click', Modal.close);
-      document.getElementById('exp-run').addEventListener('click', async () => {
-        const startDate = document.getElementById('exp-start-date').value;
-        const endDate   = document.getElementById('exp-end-date').value;
-        const selectedIds = Array.from(document.querySelectorAll('.exp-emp-check:checked')).map(c => parseInt(c.value));
-
-        if (!startDate || !endDate) { Toast.warning('Please select dates'); return; }
-        if (selectedIds.length === 0) { Toast.warning('Please select at least one employee'); return; }
-
-        Helpers.setLoading('exp-run', true);
-        const r = await API.exportAttendanceRangeExcel({ startDate, endDate, employeeIds: selectedIds });
-        Helpers.setLoading('exp-run', false);
-
-        if (r.success) {
-          Toast.success('Excel exported successfully!');
-          Modal.close();
-        } else if (r.error !== 'Cancelled.') {
-          Toast.error(r.error);
+    document.getElementById('att-export-daily-pdf').addEventListener('click', async () => {
+      Helpers.setLoading('att-export-daily-pdf', true);
+      try {
+        const res = await API.exportDailyManpowerPdf(_date);
+        if (res.success) {
+          Toast.success('Daily Manpower PDF exported successfully!');
+        } else if (res.error !== 'Cancelled.') {
+          Toast.error(res.error);
         }
+      } catch (err) {
+        Toast.error('Export failed: ' + err.message);
+      } finally {
+        Helpers.setLoading('att-export-daily-pdf', false);
+      }
+    });
+
+    document.getElementById('att-share-whatsapp').addEventListener('click', async () => {
+      Helpers.setLoading('att-share-whatsapp', true);
+      try {
+        const res = await API.shareDailyManpowerWhatsApp(_date);
+        if (res.success) {
+          navigator.clipboard.writeText(res.caption).then(() => {
+            Toast.success('Image saved! Caption copied to clipboard.');
+            API.openExternalUrl('https://web.whatsapp.com/');
+          }).catch(err => {
+            Toast.warning('Image saved, but failed to copy caption.');
+            API.openExternalUrl('https://web.whatsapp.com/');
+          });
+        } else if (res.error !== 'Cancelled.') {
+          Toast.error(res.error);
+        }
+      } catch (err) {
+        Toast.error('WhatsApp share failed: ' + err.message);
+      } finally {
+        Helpers.setLoading('att-share-whatsapp', false);
+      }
+    });
+
+    document.getElementById('att-export-register-excel-bulk').addEventListener('click', () => handleExportRegisterBulk('excel'));
+    document.getElementById('att-export-register-pdf-bulk').addEventListener('click',  () => handleExportRegisterBulk('pdf'));
+
+    document.getElementById('att-send-all-wa').addEventListener('click', () => {
+      const tbody = document.getElementById('att-bulk-tbody');
+      if (!tbody || !tbody.children.length) { Toast.warning('Load attendance first.'); return; }
+      const waButtons = Array.from(tbody.querySelectorAll('.att-wa-btn'));
+      const valid = waButtons.filter(btn => btn.dataset.phone && btn.dataset.phone.trim());
+      if (valid.length === 0) { Toast.warning('No employees with phone numbers found.'); return; }
+      if (!confirm(`Open WhatsApp for ${valid.length} employee(s)? Messages will open one by one with a 2-second delay.`)) return;
+      valid.forEach((btn, idx) => {
+        const empId = parseInt(btn.dataset.id);
+        const st = stateMap[empId];
+        const proj = (st && st.projectName) || btn.dataset.project || '—';
+        setTimeout(() => sendWhatsAppMessage(btn.dataset.phone, btn.dataset.name, st ? st.status : null, proj, _date), idx * 2000);
       });
     });
 
     await loadBulk();
+  }
+
+  async function handleExportRegisterBulk(format) {
+    const btnId = format === 'excel' ? 'att-export-register-excel-bulk' : 'att-export-register-pdf-bulk';
+    Helpers.setLoading(btnId, true);
+    try {
+      const d = new Date(_date);
+      const m = d.getMonth() + 1;
+      const y = d.getFullYear();
+      const res = await API.exportAttendanceRegister(m, y, format);
+      if (res.success) {
+        Toast.success(`${format === 'excel' ? 'Excel' : 'PDF'} Register exported successfully!`);
+      } else if (res.error !== 'Cancelled.') {
+        Toast.error(res.error);
+      }
+    } catch (err) {
+      Toast.error('Export failed: ' + err.message);
+    } finally {
+      Helpers.setLoading(btnId, false);
+    }
   }
 
   async function loadBulk() {
@@ -201,14 +219,12 @@ const AttendancePage = (() => {
     listEl.innerHTML = `<div class="skeleton" style="height:200px;border-radius:12px"></div>`;
     try {
 
-    // Wait for settings to load projects list
-    const settingsRes = await API.getSettings();
-    const settings = settingsRes.success ? settingsRes.settings : {};
+    // Wait for projects list from Projects module
     let projects = [];
-    if (settings.projects_list) {
-      try { projects = JSON.parse(settings.projects_list); }
-      catch { projects = settings.projects_list.split(',').map(p=>p.trim()); }
-    }
+    try {
+      const projRes = await window.API.getProjects({ status: 'Ongoing' });
+      if (projRes.success) projects = projRes.projects;
+    } catch(e) { console.error('Failed to load projects', e); }
 
     const res = await API.getBulkAttendance(_date);
     const records = res.records || [];
@@ -236,8 +252,9 @@ const AttendancePage = (() => {
         checkIn:       r.check_in || '09:00',
         checkOut:      r.check_out || '18:00',
         overtimeHours: Math.floor(parseFloat(r.overtime_hours || 0)),
-        isSundayWork:  r.is_sunday_work ? true : (sunday && r.status ? true : false),
+        isSundayWork:  r.status ? !!r.is_sunday_work : (sunday ? true : false),
         projectName:   r.project_name || '',
+        projectId:     r.project_id || null,
       };
     });
 
@@ -248,8 +265,6 @@ const AttendancePage = (() => {
       if (sunday) {
         if (!st.status || st.status === '') {
            st.status = (r.sat_status === 'A' || r.mon_status === 'A') ? 'A' : 'WO';
-        } else if (st.status === 'P') {
-           st.overtimeHours = st.isSundayWork ? 8 : 0;
         }
       }
       st.overtimeHours = Math.floor(Math.max(0, st.overtimeHours));
@@ -267,7 +282,8 @@ const AttendancePage = (() => {
           checkOut: st.checkOut,
           overtimeHours: st.overtimeHours,
           isSundayWork: st.isSundayWork,
-          projectName: st.projectName
+          projectName: st.projectName,
+          projectId: st.projectId
         });
         
         if (!res.success) throw new Error(res.error || 'Database operation failed');
@@ -313,6 +329,7 @@ const AttendancePage = (() => {
               <th style="text-align:center">Out Time</th>
               <th style="text-align:center;min-width:110px">OT (hrs)</th>
               ${sunday ? '<th style="text-align:center">Sun 2×</th>' : ''}
+              <th style="text-align:center;width:60px">WA</th>
             </tr></thead>
             <tbody id="att-bulk-tbody">
               ${records.map(r => {
@@ -326,7 +343,7 @@ const AttendancePage = (() => {
                   <td>
                     <select class="form-select att-project-sel" data-id="${r.id}" style="padding:4px;font-size:0.85rem">
                       <option value="">-- None --</option>
-                      ${projects.map(p => `<option value="${Helpers.escapeHtml(p)}" ${st.projectName === p ? 'selected' : ''}>${Helpers.escapeHtml(p)}</option>`).join('')}
+                      ${projects.map(p => `<option value="${p.id}" data-name="${Helpers.escapeHtml(p.name)}" ${st.projectId === p.id ? 'selected' : ''}>${Helpers.escapeHtml(p.name)}</option>`).join('')}
                     </select>
                   </td>
                   <td style="text-align:center" id="status-badge-${r.id}">
@@ -343,6 +360,14 @@ const AttendancePage = (() => {
                   <td style="text-align:center"><input type="time" class="form-input att-time-input" style="padding:4px;font-size:0.85rem" id="att-out-${r.id}" value="${st.checkOut}" data-id="${r.id}" data-type="out" /></td>
                   <td style="text-align:center" id="att-ot-${r.id}"></td>
                   ${sunday ? `<td style="text-align:center"><input type="checkbox" class="att-sunday-check" data-id="${r.id}" ${st.isSundayWork ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--warning)" /></td>` : ''}
+                  <td style="text-align:center">
+                    <button class="btn btn-sm att-wa-btn"
+                      data-id="${r.id}"
+                      data-name="${Helpers.escapeHtml(r.name)}"
+                      data-phone="${r.phone || ''}"
+                      style="background:#25D366;color:#fff;border:none;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;"
+                      title="Send WhatsApp to ${Helpers.escapeHtml(r.name)}">📱</button>
+                  </td>
                 </tr>
               `}).join('')}
             </tbody>
@@ -465,6 +490,18 @@ const AttendancePage = (() => {
         btn.disabled = false;
         Toast.success('Saved all attendance globally.');
       }
+
+      // WhatsApp per-row button
+      if (e.target.closest('.att-wa-btn')) {
+        const btn = e.target.closest('.att-wa-btn');
+        const empId = parseInt(btn.dataset.id);
+        const empName = btn.dataset.name;
+        const phone = btn.dataset.phone;
+        const st = stateMap[empId];
+        const rec = records.find(x => x.id === empId);
+        const proj = st.projectName || (rec && rec.project_name) || '—';
+        sendWhatsAppMessage(phone, empName, st.status, proj, _date);
+      }
     });
 
     listEl.addEventListener('change', async e => {
@@ -484,7 +521,10 @@ const AttendancePage = (() => {
       // Project changing
       if (e.target.classList.contains('att-project-sel')) {
         const empId = parseInt(e.target.dataset.id);
-        stateMap[empId].projectName = e.target.value;
+        const sel = e.target;
+        const opt = sel.options[sel.selectedIndex];
+        stateMap[empId].projectId = sel.value ? parseInt(sel.value) : null;
+        stateMap[empId].projectName = opt.dataset.name || '';
         await autoSaveRow(empId);
       }
 
@@ -511,6 +551,56 @@ const AttendancePage = (() => {
     return `<span class="badge ${map[status] || 'badge-muted'}">${labels[status] || status}</span>`;
   }
 
+  // ── WhatsApp Deep-Link Helper ────────────────────────────────────────────────
+  async function sendWhatsAppMessage(phone, name, status, project, date) {
+    if (!phone || !phone.trim()) {
+      Toast.error(`No phone number for ${name}. Please update the employee profile.`);
+      return;
+    }
+    if (!status) {
+      Toast.error(`Attendance not yet marked for ${name} on ${date}.`);
+      return;
+    }
+
+    // Sanitise phone: digits only, prefix 91 if 10-digit India number
+    let cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length === 10) cleaned = '91' + cleaned;
+
+    const statusMap = { P: 'Present ✅', A: 'Absent ❌', H: 'Half Day 🌓', WO: 'Weekly Off 💤' };
+    const statusLabel = statusMap[status] || status;
+
+    const [y, m, d] = date.split('-');
+    const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const formattedDate = `${d}-${MONTHS_SHORT[parseInt(m)-1]}-${y}`;
+
+    // Fetch company name dynamically from settings
+    let companyName = 'HR Team';
+    try {
+      const sr = await API.getSettings();
+      if (sr.success && sr.settings && sr.settings.company_name) {
+        companyName = sr.settings.company_name;
+      }
+    } catch(_) {}
+
+    const msg = `Dear ${name},
+
+This is to inform you that your attendance for ${formattedDate} has been recorded as:
+
+Status: ${statusLabel}
+Project: ${project || '—'}
+
+For any discrepancy, please contact the office.
+
+Regards,
+${companyName}`;
+
+    const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(msg)}`;
+
+    Toast.success(`Opening WhatsApp for ${name}…`);
+    // window.open triggers setWindowOpenHandler in main.js → shell.openExternal → system browser/WhatsApp
+    window.open(url, '_blank');
+  }
+
   /* ── MONTHLY VIEW MODE ───────────────────────────────────────────────────── */
   async function initMonthly() {
     const empRes = await API.getEmployees({ status: 'active' });
@@ -534,6 +624,18 @@ const AttendancePage = (() => {
         </div>
         <div class="toolbar-right">
           <div id="att-summary-chips" class="flex gap-2" style="flex-wrap:wrap"></div>
+          <button id="att-export-register-excel" class="btn btn-primary" style="margin-left:auto">
+            <span class="btn-text">📊 Excel Register</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+          <button id="att-export-register-pdf" class="btn btn-secondary">
+            <span class="btn-text">📄 PDF Register</span>
+            <span class="btn-loader" hidden></span>
+          </button>
+          <button id="att-export-calendar-pdf" class="btn btn-secondary">
+            <span class="btn-text">👉 Calendar PDF Report</span>
+            <span class="btn-loader" hidden></span>
+          </button>
         </div>
       </div>
       <div id="att-calendar-container" class="card"></div>
@@ -543,7 +645,44 @@ const AttendancePage = (() => {
     document.getElementById('att-month-sel').addEventListener('change', e => { _month = parseInt(e.target.value); loadMonthly(); });
     document.getElementById('att-year-sel').addEventListener('change',  e => { _year  = parseInt(e.target.value); loadMonthly(); });
 
+    document.getElementById('att-export-register-excel').addEventListener('click', () => handleExportRegister('excel'));
+    document.getElementById('att-export-register-pdf').addEventListener('click', () => handleExportRegister('pdf'));
+    document.getElementById('att-export-calendar-pdf').addEventListener('click', handleExportCalendarPdf);
+
     await loadMonthly();
+  }
+
+  async function handleExportCalendarPdf() {
+    Helpers.setLoading('att-export-calendar-pdf', true);
+    try {
+      const res = await API.exportCalendarPdf(_selEmp, _month, _year);
+      if (res.success) {
+        Toast.success('Calendar PDF exported successfully!');
+      } else if (res.error !== 'Cancelled.') {
+        Toast.error(res.error);
+      }
+    } catch (err) {
+      Toast.error('Export failed: ' + err.message);
+    } finally {
+      Helpers.setLoading('att-export-calendar-pdf', false);
+    }
+  }
+
+  async function handleExportRegister(format) {
+    const btnId = format === 'excel' ? 'att-export-register-excel' : 'att-export-register-pdf';
+    Helpers.setLoading(btnId, true);
+    try {
+      const res = await API.exportAttendanceRegister(_month, _year, format);
+      if (res.success) {
+        Toast.success(`${format === 'excel' ? 'Excel' : 'PDF'} Register exported successfully!`);
+      } else if (res.error !== 'Cancelled.') {
+        Toast.error(res.error);
+      }
+    } catch (err) {
+      Toast.error('Export failed: ' + err.message);
+    } finally {
+      Helpers.setLoading(btnId, false);
+    }
   }
 
   async function loadMonthly() {
@@ -628,36 +767,45 @@ const AttendancePage = (() => {
     calHtml += `</div>`;
     calEl.innerHTML = calHtml;
 
-    // Calendar cell click → cycle P → A → H → null (only for active cells)
+    // Calendar cell click → cycle P → A → H → WO → null (only for active cells)
     calEl.querySelectorAll('.att-cal-btn:not(.disabled-cell)').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const cycle = { '': 'P', 'P': 'A', 'A': 'H', 'H': '' };
-        const next  = cycle[btn.dataset.status];
+        const cycle = { '': 'P', 'P': 'A', 'A': 'H', 'H': 'WO', 'WO': '' };
+        const next  = cycle[btn.dataset.status || ''];
         btn.dataset.status = next;
         btn.className = `att-btn att-cal-btn ${next}`;
         btn.textContent = next || '—';
-        if (next) {
+
+        try {
           const dateIsSunday = isSunday(btn.dataset.date);
-          await API.markAttendance({
+          const res = await API.markAttendance({
             employeeId:    _selEmp,
             date:          btn.dataset.date,
             status:        next,
             markedBy:      userId,
             isSundayWork:  dateIsSunday ? 1 : 0,
           });
+          if (!res.success) throw new Error(res.error || 'Failed to save');
+
+          // Refresh summary
+          const sr = await API.getAttendanceSummary(_selEmp, _month, _year);
+          const sm = sr.summary || {};
+          const chipsEl = document.getElementById('att-summary-chips');
+          if (chipsEl) {
+            chipsEl.innerHTML = `
+              <span class="badge badge-success">✓ ${sm.P} Present</span>
+              <span class="badge badge-danger">✕ ${sm.A} Absent</span>
+              <span class="badge badge-warning">½ ${sm.H} Half Day</span>
+              <span class="badge badge-accent">≈ ${sm.effectiveDays} Effective</span>
+              ${sm.totalOvertimeHours > 0 ? `<span class="badge badge-accent">⏱ ${sm.totalOvertimeHours.toFixed(1)}h OT</span>` : ''}
+              ${sm.sundayWorkDays > 0 ? `<span class="badge badge-warning">☀ ${sm.sundayWorkDays} Sun</span>` : ''}
+            `;
+          }
+          EventBus.emit('data:refresh');
+        } catch (err) {
+          Toast.error('Failed to save attendance: ' + err.message);
+          console.error(err);
         }
-        // Refresh summary
-        const sr = await API.getAttendanceSummary(_selEmp, _month, _year);
-        const sm = sr.summary || {};
-        document.getElementById('att-summary-chips').innerHTML = `
-          <span class="badge badge-success">✓ ${sm.P} Present</span>
-          <span class="badge badge-danger">✕ ${sm.A} Absent</span>
-          <span class="badge badge-warning">½ ${sm.H} Half Day</span>
-          <span class="badge badge-accent">≈ ${sm.effectiveDays} Effective</span>
-          ${sm.totalOvertimeHours > 0 ? `<span class="badge badge-accent">⏱ ${sm.totalOvertimeHours.toFixed(1)}h OT</span>` : ''}
-          ${sm.sundayWorkDays > 0 ? `<span class="badge badge-warning">☀ ${sm.sundayWorkDays} Sun</span>` : ''}
-        `;
-        EventBus.emit('data:refresh');
       });
     });
   }

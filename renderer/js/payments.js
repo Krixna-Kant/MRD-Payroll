@@ -106,8 +106,14 @@ const PaymentsPage = (() => {
                   const otFormula = c.totalOvertimeHours > 0 ? ` + (${c.totalOvertimeHours}h×${(hourly/100).toFixed(0)})` : '';
                   
                   const paidAmt = c.existingPayment ? c.existingPayment.net_paid : 0;
-                  const currentBalance = (c.netPayable - paidAmt);
-                  const isPartiallyPaid = c.existingPayment && currentBalance !== 0;
+                  // Closing balance: what's owed after salary earned minus what was paid
+                  // Uses openingBalance + salaryEarned - otherDeductions - paidAmt
+                  // This correctly handles advance-recovery cases where netPayable is 0
+                  const closingBal = c.existingPayment
+                    ? (c.openingBalance + c.salaryEarned - (c.existingPayment.other_deductions || 0) - paidAmt)
+                    : null;
+                  const isSettled = c.existingPayment && Math.abs(closingBal) < 1; // within 1 paisa = settled
+                  const isPartiallyPaid = c.existingPayment && !isSettled;
 
                   return `
                   <tr>
@@ -133,13 +139,14 @@ const PaymentsPage = (() => {
                     </td>
                     <td style="text-align:right">
                       <div class="font-600 amount info-clickable" style="font-size:0.9rem" data-idx="${idx}" data-type="earned">
-                         ${API.fmtRupees(c.totalEarnings)}
+                         ${API.fmtRupees(c.salaryEarned)}
+                         ${c.isMismatch ? '<span style="color:var(--danger); cursor:help" title="Attendance has changed since payment!"> ⚠️</span>' : ''}
                       </div>
                     </td>
                      <td style="text-align:right">
-                         <div class="amount info-clickable ${c.advanceDeducted > 0 ? 'amount-warning' : (c.advanceDeducted < 0 ? 'amount-success' : 'text-muted')}" 
+                         <div class="amount info-clickable ${c.openingBalance < 0 ? 'amount-warning' : (c.openingBalance > 0 ? 'amount-success' : 'text-muted')}" 
                               style="font-size:0.9rem" data-idx="${idx}" data-type="balance">
-                           ${c.advanceDeducted === 0 ? '—' : (c.advanceDeducted > 0 ? '-' : '+' ) + API.fmtRupees(Math.abs(c.advanceDeducted))}
+                           ${c.openingBalance === 0 ? '—' : (c.openingBalance < 0 ? '-' : '+' ) + API.fmtRupees(Math.abs(c.openingBalance))}
                          </div>
                      </td>
                     <td style="text-align:right;background:var(--bg-subtle)">
@@ -147,14 +154,20 @@ const PaymentsPage = (() => {
                          ${API.fmtRupees(c.netPayable)}
                        </div>
                     </td>
-                    <td style="text-align:right" class="amount ${paidAmt > 0 ? 'text-accent font-600' : 'text-muted'}">
-                       ${paidAmt > 0 ? API.fmtRupees(paidAmt) : '—'}
-                    </td>
-                    <td style="text-align:right">
-                       <div class="amount ${isPartiallyPaid ? 'amount-danger font-600' : 'text-muted'}" style="font-size:0.95rem">
-                          ${isPartiallyPaid ? API.fmtRupees(currentBalance) : (c.existingPayment ? 'Settled' : '—')}
-                       </div>
-                    </td>
+                     <td style="text-align:right" class="amount ${c.existingPayment ? 'text-accent font-600' : 'text-muted'}">
+                        ${c.existingPayment ? API.fmtRupees(paidAmt) : '—'}
+                     </td>
+                     <td style="text-align:right">
+                        <div class="amount ${isPartiallyPaid ? 'amount-danger font-600' : (isSettled ? 'text-success' : 'text-muted')}" style="font-size:0.95rem">
+                           ${c.existingPayment 
+                              ? (isSettled 
+                                  ? 'Settled' 
+                                  : (closingBal < 0 
+                                      ? `<span class="text-danger">${API.fmtRupees(Math.abs(closingBal))} Adv</span>`
+                                      : `<span class="text-warning">+${API.fmtRupees(closingBal)} Pend</span>`))
+                              : '—'}
+                        </div>
+                     </td>
                     <td style="text-align:center">
                       ${c.existingPayment 
                           ? `<div class="flex flex-col gap-1 items-center">
@@ -222,42 +235,46 @@ const PaymentsPage = (() => {
           <div class="calc-row"><span>Half Day (${c.halfDays}d × 0.5 × ${API.fmtRupees(perDay)})</span> <span>${API.fmtRupees(c.halfDays * 0.5 * perDay)}</span></div>
           <div class="calc-row"><span>Weekly Off (${c.woDays}d × ${API.fmtRupees(perDay)})</span> <span>${API.fmtRupees(c.woDays * perDay)}</span></div>
           ${c.totalOvertimeHours > 0 ? `<div class="calc-row"><span>Overtime (${c.totalOvertimeHours}h × ${API.fmtRupees(hourly)})</span> <span>${API.fmtRupees(c.overtimePay)}</span></div>` : ''}
+          ${c.reimbursedExpenses > 0 ? `<div class="calc-row text-success"><span>Expenses Reimbursed</span> <span>+${API.fmtRupees(c.reimbursedExpenses)}</span></div>` : ''}
         </div>
         <div class="calc-row mt-2 font-600" style="border-top:1px solid var(--border); padding-top:8px">
           <span>Total Earned</span> <span class="amount amount-success">${API.fmtRupees(c.totalEarnings)}</span>
         </div>
       `;
     } else if (type === 'balance') {
-      title = 'Advance & Dues Details';
-      const items = (c.advanceList || []).map(a => {
-        let label = a.isSystem ? (a.amount > 0 ? 'Balance C/F' : 'Arrears C/F') : 'Manual Advance';
-        return `
-          <div class="calc-row">
-            <span>${label} (${a.sourceMonth})</span>
-            <span class="${a.amount > 0 ? 'text-danger' : 'text-success'}">
-              ${a.amount > 0 ? '-' : '+'}${API.fmtRupees(Math.abs(a.amount))}
-            </span>
-          </div>
-        `;
-      }).join('');
-
+      title = 'Opening Balance Details';
       content = `
-        ${items || '<div class="text-muted p-2">No adjustments found for this period.</div>'}
-        <div class="calc-row mt-2 font-600" style="border-top:2px solid var(--border); padding-top:8px">
-          <span>Net Adjustment</span>
-          <span class="${c.advanceDeducted > 0 ? 'text-danger' : (c.advanceDeducted < 0 ? 'text-success' : 'text-muted')}">
-             ${c.advanceDeducted === 0 ? '₹0.00' : (c.advanceDeducted > 0 ? '-' : '+') + API.fmtRupees(Math.abs(c.advanceDeducted))}
+        <div class="calc-row">
+          <span>Current Running Balance</span>
+          <span class="${c.openingBalance < 0 ? 'text-danger' : (c.openingBalance > 0 ? 'text-success' : 'text-muted')}">
+             ${c.openingBalance === 0 ? '₹0.00' : (c.openingBalance < 0 ? '-' : '+') + API.fmtRupees(Math.abs(c.openingBalance))}
           </span>
+        </div>
+        <div class="text-xs text-muted mt-2">
+          ${c.openingBalance < 0 ? 'Employee owes company (Advance)' : (c.openingBalance > 0 ? 'Company owes employee (Pending)' : 'No pending balance')}
         </div>
       `;
     } else if (type === 'summary') {
       title = 'Salary Summary';
       content = `
-        <div class="calc-row"><span>Gross Earnings</span> <span>${API.fmtRupees(c.totalEarnings)}</span></div>
-        <div class="calc-row"><span>Advance/Dues</span> <span class="${c.advanceDeducted > 0 ? 'text-danger' : 'text-success'}">${c.advanceDeducted > 0 ? '-' : '+'}${API.fmtRupees(Math.abs(c.advanceDeducted))}</span></div>
+        <div class="calc-row"><span>Opening Balance</span> <span class="${c.openingBalance < 0 ? 'text-danger' : 'text-success'}">${c.openingBalance < 0 ? '-' : '+'}${API.fmtRupees(Math.abs(c.openingBalance))}</span></div>
+        <div class="calc-row"><span>Salary Earned</span> <span>${API.fmtRupees(c.salaryEarned)}</span></div>
+        
+        ${c.recoverableAmount > 0 ? `
+          <div class="calc-row text-warning" style="border-top:1px dashed var(--border); margin-top:4px; padding-top:4px">
+            <span>Advance Recovery</span>
+            <span>-${API.fmtRupees(c.recoverableAmount)}</span>
+          </div>
+          <div class="calc-row font-600">
+            <span>Adjusted Salary</span>
+            <span>${API.fmtRupees(c.adjustedSalary)}</span>
+          </div>
+        ` : ''}
+
         ${c.otherDeductions > 0 ? `<div class="calc-row"><span>Other Deductions</span> <span>-${API.fmtRupees(c.otherDeductions)}</span></div>` : ''}
+        
         <div class="calc-row mt-2 font-700 text-lg" style="border-top:2px solid var(--border); padding-top:8px">
-          <span>Final Net Payable</span> <span class="amount amount-success">${API.fmtRupees(c.netPayable)}</span>
+          <span>Total Net Payable</span> <span class="amount amount-success">${API.fmtRupees(c.netPayable)}</span>
         </div>
       `;
     }
@@ -361,10 +378,12 @@ const PaymentsPage = (() => {
     );
     container().querySelectorAll('.pay-whatsapp-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const phone = btn.dataset.phone.replace(/\\D/g, '');
+        // Sanitise phone: remove non-digits, then ensure 12-digit international format
+        let phone = btn.dataset.phone.replace(/\D/g, '');
+        if (phone.length === 10) phone = '91' + phone; // add India code only for bare 10-digit numbers
         const msg   = encodeURIComponent(`Dear ${btn.dataset.name},\n\nYour salary for ${btn.dataset.month} ${btn.dataset.year} is *${btn.dataset.net}*.\n\nThank you!`);
         if (!phone) { Toast.warning('No phone for this employee.'); return; }
-        window.open(`https://wa.me/91${phone}?text=${msg}`, '_blank');
+        window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
       });
     });
     container().querySelectorAll('.pay-del-btn').forEach(btn =>
@@ -386,13 +405,14 @@ const PaymentsPage = (() => {
   // ── Auto-Calculate Pay Modal ───────────────────────────────────────────────
   function openPayModal(calc) {
     const perDayRs       = (Math.round(calc.grossSalary / 30) / 100);
-    const earnedRs       = (calc.totalEarnings / 100);
-    const advanceRs      = (calc.advanceDeducted / 100);
+    const openingRs      = (calc.openingBalance / 100);
+    const salaryEarnedRs = (calc.salaryEarned / 100);
     const otPayRs        = (calc.overtimePay / 100);
     const effectiveRs    = (calc.effectiveSalary / 100);
     const foodRs         = (calc.foodAllowance / 100);
     const travelRs       = (calc.travelAllowance / 100);
     const otherDedRs     = (calc.otherDeductions / 100);
+    const reimbursedRs   = ((calc.reimbursedExpenses || 0) / 100);
     let   netPayableRs   = (calc.netPayable / 100);
 
     const fmtR = (v) => '\u20b9' + Math.round(v).toLocaleString('en-IN');
@@ -417,51 +437,41 @@ const PaymentsPage = (() => {
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Half Day (H)</span><span class="font-600">${calc.halfDays} days</span></div>
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Weekly Off (WO)</span><span class="font-600">${calc.woDays} days</span></div>
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Absent (A)</span><span class="font-600 text-danger">${calc.absentDays} days</span></div>
-                <div class="calc-row" style="padding:2px 0"><span class="text-muted">Effective Days</span><span class="font-600">${calc.attendanceDays} / ${calc.totalDays}</span></div>
+                <div class="calc-row" style="padding:2px 0"><span class="text-muted">Effective Days</span><span class="font-600">${calc.attendanceDays} / 30</span></div>
               </div>
             </div>
 
             <div style="border-top:1px solid var(--border); margin:12px 0; padding-top:12px">
               <div class="text-sm font-600" style="margin-bottom:8px; color:var(--accent)">💰 Earnings</div>
               <div class="calc-row"><span class="text-muted">Attendance Earnings</span><span class="font-600">${fmtR(effectiveRs)}</span></div>
-              <div class="calc-row"><span class="text-muted">OT Hours</span><span class="font-600">${calc.totalOvertimeHours} hrs × ${fmtR(calc.hourlyRate / 100)}/hr</span></div>
-              <div class="calc-row"><span class="text-muted">OT Amount</span><span class="font-600">${fmtR(otPayRs)}</span></div>
+              <div class="calc-row"><span class="text-muted">OT Amount (${calc.totalOvertimeHours}h)</span><span class="font-600">${fmtR(otPayRs)}</span></div>
               <div class="calc-row"><span class="text-muted">Food Allowance</span><span class="font-600" id="pay-food-display">${fmtR(foodRs)}</span></div>
               <div class="calc-row"><span class="text-muted">Travel Allowance</span><span class="font-600" id="pay-travel-display">${fmtR(travelRs)}</span></div>
+              <div class="calc-row"><span class="text-muted">Expenses Reimbursed</span><span class="font-600 text-success" id="pay-reimbursed-display">+${fmtR(reimbursedRs)}</span></div>
               <div class="calc-row" style="border-top:1px dashed var(--border); padding-top:8px; margin-top:8px">
-                <span class="font-600">Gross Earned</span><span class="font-600" id="pay-gross-display">${fmtR(earnedRs)}</span>
+                <span class="font-600">Gross Salary Earned</span><span class="font-600" id="pay-gross-display">${fmtR(salaryEarnedRs)}</span>
               </div>
             </div>
 
             <div style="border-top:1px solid var(--border); margin:12px 0; padding-top:12px">
-               ${calc.prevMonthDues !== 0 ? `
-                  <div class="calc-row">
-                    <span class="text-muted">${calc.prevMonthDues > 0 ? 'Prev. Month Advance' : 'Prev. Month Arrears'}</span>
-                    <span class="font-600 ${calc.prevMonthDues < 0 ? 'text-success' : 'text-danger'}">
-                      ${calc.prevMonthDues < 0 ? '+' : '-'} ${fmtR(Math.abs(calc.prevMonthDues / 100))}
-                    </span>
-                  </div>
-               ` : ''}
-               ${calc.manualAdvances !== 0 ? `
-                  <div class="calc-row">
-                    <span class="text-muted">Current Month Advance</span>
-                    <span class="font-600 text-danger">- ${fmtR(calc.manualAdvances / 100)}</span>
-                  </div>
-               ` : ''}
-               ${(calc.prevMonthDues !== 0 && calc.manualAdvances !== 0) ? `
-                  <div class="calc-row" style="border-top:1px dashed var(--border); margin-top:4px; padding-top:4px">
-                    <span class="font-600">Net Adjustments</span>
-                    <span class="font-600 ${advanceRs < 0 ? 'text-success' : 'text-danger'}">
-                      ${advanceRs < 0 ? '+' : '-'} ${fmtR(Math.abs(advanceRs))}
-                    </span>
-                  </div>
-               ` : (calc.prevMonthDues === 0 && calc.manualAdvances === 0 ? `
-                  <div class="calc-row"><span class="text-muted">Adjustments</span><span class="text-muted">None</span></div>
-               ` : '')}
+               <div class="calc-row">
+                 <span class="text-muted">Opening Balance</span>
+                 <span class="font-600 ${openingRs < 0 ? 'text-danger' : (openingRs > 0 ? 'text-success' : '')}">
+                   ${openingRs === 0 ? '₹0' : (openingRs < 0 ? '-' : '+') + fmtR(Math.abs(openingRs))}
+                 </span>
+               </div>
+               <div id="recovery-row" class="calc-row text-warning" style="display:${calc.recoverableAmount > 0 ? 'flex' : 'none'}">
+                 <span class="text-sm">Advance Recovery</span>
+                 <span class="font-600">-${fmtR(calc.recoverableAmount / 100)}</span>
+               </div>
+               <div class="calc-row" style="border-top:1px dashed var(--border); margin-top:4px; padding-top:4px">
+                 <span class="font-600">Adjusted Salary</span>
+                 <span class="font-600" id="pay-adjusted-display">${fmtR(calc.adjustedSalary / 100)}</span>
+               </div>
             </div>
 
             <div class="calc-row text-lg" style="border-top:2px solid var(--border); padding-top:12px; margin-top:12px">
-              <span class="font-600">Net Payable:</span>
+              <span class="font-600">Total Net Payable:</span>
               <span class="amount amount-success font-700" style="font-size:1.4rem" id="pay-modal-net-view">${fmtR(netPayableRs)}</span>
             </div>
           </div>
@@ -471,7 +481,7 @@ const PaymentsPage = (() => {
             <div class="form-group mb-4">
               <label class="form-label" style="color:var(--accent); font-size:1rem">Actual Amount Paid (₹)</label>
               <input id="ps-actual-paid" type="number" class="form-input" style="font-size:1.5rem; font-weight:800; padding:12px 16px; border-width:2px; border-color:var(--accent)" value="${Math.round(calc.suggestedPaidAmount / 100)}" min="0" step="10" />
-              <div id="ps-carry-msg" class="text-sm mt-2 p-2 rounded style="background:var(--bg-body); border-radius:8px">Match exactly to settle all dues.</div>
+              <div id="ps-carry-msg" class="text-sm mt-2 p-2 rounded" style="background:var(--bg-body); border-radius:8px">Match exactly to settle all dues.</div>
             </div>
 
             <div class="form-row mb-3">
@@ -501,8 +511,8 @@ const PaymentsPage = (() => {
             </div>
 
             <div class="form-group mb-3">
-              <label class="form-label text-warning">Pending Deductions (₹)</label>
-              <input id="ps-other-ded" type="number" class="form-input" value="0" min="0" />
+              <label class="form-label text-warning">Other Deductions (₹)</label>
+              <input id="ps-other-ded" type="number" class="form-input" value="${Math.round(otherDedRs)}" min="0" />
             </div>
 
             <div class="form-group mb-2">
@@ -527,32 +537,46 @@ const PaymentsPage = (() => {
     function recalculate(autoUpdatePaid) {
       const addedFood = parseFloat(document.getElementById('ps-food-allow').value) || 0;
       const addedTravel = parseFloat(document.getElementById('ps-travel-allow').value) || 0;
-      const addedPending = parseFloat(document.getElementById('ps-other-ded').value) || 0;
+      const addedOtherDed = parseFloat(document.getElementById('ps-other-ded').value) || 0;
 
-      // Live update the earnings breakdown display
       document.getElementById('pay-food-display').textContent = fmtR(addedFood);
       document.getElementById('pay-travel-display').textContent = fmtR(addedTravel);
 
-      const grossEarned = effectiveRs + otPayRs + addedFood + addedTravel;
+      const grossEarned = effectiveRs + otPayRs + addedFood + addedTravel + reimbursedRs;
       document.getElementById('pay-gross-display').textContent = fmtR(grossEarned);
 
-      const realTimeNet = grossEarned - advanceRs - addedPending;
+      // Recovery logic in UI
+      let recov = 0;
+      if (openingRs < 0 && grossEarned > 0) {
+        recov = Math.min(Math.abs(openingRs), grossEarned);
+      }
+      const adjSalary = grossEarned - recov;
+      
+      const recovRow = document.getElementById('recovery-row');
+      if (recov > 0) {
+        recovRow.style.display = 'flex';
+        recovRow.querySelector('span:last-child').textContent = '-' + fmtR(recov);
+      } else {
+        recovRow.style.display = 'none';
+      }
+      document.getElementById('pay-adjusted-display').textContent = fmtR(adjSalary);
+
+      const realTimeNet = Math.max(0, openingRs + grossEarned - addedOtherDed);
       document.getElementById('pay-modal-net-view').textContent = fmtR(realTimeNet);
 
-      // Auto-update Actual Amount Paid to match Net Payable
       if (autoUpdatePaid) {
         paidInp.value = Math.round(realTimeNet);
       }
 
       const paying = parseFloat(paidInp.value) || 0;
-      const diff = paying - realTimeNet;
+      const closingBalance = openingRs + grossEarned - addedOtherDed - paying;
 
-      if (Math.abs(diff) < 0.01) {
-         msgEl.innerHTML = '<span class="text-success">Settled. No Arrears or Advance for next month.</span>';
-      } else if (diff < 0) {
-         msgEl.innerHTML = '<span class="text-danger">' + fmtR(Math.abs(diff)) + ' will carry forward to next month as Pending Arrears.</span>';
+      if (Math.abs(closingBalance) < 0.01) {
+         msgEl.innerHTML = '<span class="text-success">Settled. Closing Balance will be ₹0.</span>';
+      } else if (closingBalance < 0) {
+         msgEl.innerHTML = '<span class="text-danger">Closing Balance: ' + fmtR(closingBalance) + ' (Advance)</span>';
       } else {
-         msgEl.innerHTML = '<span class="text-warning">' + fmtR(diff) + ' will carry forward to next month as Advance.</span>';
+         msgEl.innerHTML = '<span class="text-warning">Closing Balance: +' + fmtR(closingBalance) + ' (Pending)</span>';
       }
     }
 
@@ -566,20 +590,25 @@ const PaymentsPage = (() => {
     document.getElementById('ps-save').addEventListener('click', async () => {
       Helpers.setLoading('ps-save', true);
 
+      const foodVal = parseFloat(document.getElementById('ps-food-allow').value) || 0;
+      const travelVal = parseFloat(document.getElementById('ps-travel-allow').value) || 0;
+      const salaryEarned = calc.effectiveSalary + calc.overtimePay + (foodVal * 100) + (travelVal * 100);
+
       const payload = {
         employeeId:      calc.employeeId,
         month:           _filterMonth,
         year:            _filterYear,
         grossSalary:     calc.grossSalary,
         attendanceDays:  calc.attendanceDays,
-        totalDays:       calc.totalDays,
+        totalDays:       30,
         useAttendance:   calc.useAttendance,
         effectiveSalary: calc.effectiveSalary,
-        advanceDeducted: calc.advanceDeducted,
-        totalEarnings:   calc.totalEarnings,
+        salaryEarned:    salaryEarned,
+        advanceDeducted: calc.recoverableAmount, // New system: advanceDeducted = amount recovered from balance
         otherDeductionsRupees: parseFloat(document.getElementById('ps-other-ded').value) || 0,
-        foodAllowanceRupees:   parseFloat(document.getElementById('ps-food-allow').value) || 0,
-        travelAllowanceRupees: parseFloat(document.getElementById('ps-travel-allow').value) || 0,
+        foodAllowanceRupees:   foodVal,
+        travelAllowanceRupees: travelVal,
+        reimbursedExpenses:    calc.reimbursedExpenses || 0,
         paidAmountRupees: parseFloat(paidInp.value) || 0,
         mode:            document.getElementById('ps-mode').value,
         paymentDate:     document.getElementById('ps-pay-date').value,
@@ -591,8 +620,7 @@ const PaymentsPage = (() => {
         absentDays:      calc.absentDays,
         woDays:          calc.woDays,
         overtimeHours:   calc.totalOvertimeHours,
-        overtimePay:     calc.overtimePay,
-        netPayable: Math.round(((effectiveRs + otPayRs + (parseFloat(document.getElementById('ps-food-allow').value) || 0) + (parseFloat(document.getElementById('ps-travel-allow').value) || 0)) - advanceRs - (parseFloat(document.getElementById('ps-other-ded').value) || 0)) * 100)
+        overtimePay:     calc.overtimePay
       };
 
       const r = await API.createPayment(payload);

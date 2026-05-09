@@ -35,24 +35,103 @@ module.exports = function registerAdvanceHandlers(ipcMain) {
     if (!employeeId) return { success: false, error: 'Employee is required.' };
     if (!amount || amount <= 0) return { success: false, error: 'Amount must be greater than zero.' };
 
-    const employee = db.prepare('SELECT id FROM employees WHERE id = ?').get(employeeId);
+    const employee = db.prepare('SELECT id, balance FROM employees WHERE id = ?').get(employeeId);
     if (!employee) return { success: false, error: 'Employee not found.' };
 
-    const result = db.prepare(`
-      INSERT INTO advances (employee_id, amount, mode, date, month, year, notes, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(employeeId, amount, mode || 'Cash', date, month || null, year || null, notes || null, createdBy || null);
+    const transaction = db.transaction(() => {
+      // 1. Insert advance record
+      const result = db.prepare(`
+        INSERT INTO advances (employee_id, amount, mode, date, month, year, notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(employeeId, amount, mode || 'Cash', date, month || null, year || null, notes || null, createdBy || null);
 
-    return { success: true, advanceId: result.lastInsertRowid };
+      const advanceId = result.lastInsertRowid;
+
+      // 2. Update employee balance (Advance = subtract from balance)
+      const newBalance = employee.balance - amount;
+      db.prepare('UPDATE employees SET balance = ?, updated_at = (strftime(\'%s\', \'now\')) WHERE id = ?')
+        .run(newBalance, employeeId);
+
+      // 3. Record in ledger
+      db.prepare(`
+        INSERT INTO ledger (employee_id, type, amount, running_balance, date, month, year, notes, reference_id)
+        VALUES (?, 'ADVANCE', ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        employeeId, 
+        -amount, // Store as negative since it's an advance (employee owes)
+        newBalance, 
+        date, 
+        month || null, 
+        year || null, 
+        notes || 'Manual Advance', 
+        advanceId
+      );
+
+      return advanceId;
+    });
+
+    try {
+      const advanceId = transaction();
+
+      // Audit Log
+      const { logActivity } = require('../utils/audit');
+      const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(employeeId);
+      logActivity('Advances', 'Added', `Added advance of ₹${amount/100} for ${emp?.name}`, null, `Amount: ₹${amount/100}`);
+
+      return { success: true, advanceId };
+    } catch (err) {
+      console.error('[Advances IPC] Error adding advance:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   // ── Delete Advance ─────────────────────────────────────────────────────────
   ipcMain.handle('advances:delete', async (_, id) => {
     const db = getDB();
-    const existing = db.prepare('SELECT id FROM advances WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT * FROM advances WHERE id = ?').get(id);
     if (!existing) return { success: false, error: 'Advance record not found.' };
-    db.prepare('DELETE FROM advances WHERE id = ?').run(id);
-    return { success: true };
+
+    const employee = db.prepare('SELECT id, balance FROM employees WHERE id = ?').get(existing.employee_id);
+    if (!employee) return { success: false, error: 'Employee not found.' };
+
+    const transaction = db.transaction(() => {
+      // 1. Delete advance record
+      db.prepare('DELETE FROM advances WHERE id = ?').run(id);
+
+      // 2. Revert employee balance (Add amount back)
+      const newBalance = employee.balance + existing.amount;
+      db.prepare('UPDATE employees SET balance = ?, updated_at = (strftime(\'%s\', \'now\')) WHERE id = ?')
+        .run(newBalance, employee.id);
+
+      // 3. Record reversal in ledger
+      db.prepare(`
+        INSERT INTO ledger (employee_id, type, amount, running_balance, date, month, year, notes, reference_id)
+        VALUES (?, 'ADJUSTMENT', ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        employee.id,
+        existing.amount, // Positive adjustment to reverse negative advance
+        newBalance,
+        new Date().toISOString().split('T')[0],
+        existing.month,
+        existing.year,
+        `Reversal of Advance ID: ${id}`,
+        id
+      );
+      return true;
+    });
+
+    try {
+      transaction();
+
+      // Audit Log
+      const { logActivity } = require('../utils/audit');
+      logActivity('Advances', 'Deleted', `Deleted advance of ₹${existing.amount/100} for ${employee.name}`, `Amount: ₹${existing.amount/100}`, null);
+
+      return { success: true };
+    } catch (err) {
+      console.error('[Advances IPC] Error deleting advance:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   // ── Get total advances for an employee in a specific month/year ───────────

@@ -40,6 +40,7 @@ const API = (() => {
       ...emp,
       salary: toPaisa(emp.salary), // ₹ → paisa before storing
       fixedGrossSalary: toPaisa(emp.fixedGrossSalary), 
+      balance: toPaisa(emp.balance),
     });
   }
   async function updateEmployee(id, emp) {
@@ -50,12 +51,20 @@ const API = (() => {
     });
   }
   async function deleteEmployee(id) { return window.electronAPI.deleteEmployee(id); }
+  async function updateBalance(data) { 
+    return window.electronAPI.updateBalance({
+      ...data,
+      amount: toPaisa(data.amount)
+    }); 
+  }
+  async function getLedger(id) { return window.electronAPI.getLedger(id); }
 
   // ── Attendance ──────────────────────────────────────────────────────────
   async function markAttendance(data)              { return window.electronAPI.markAttendance(data); }
   async function getMonthAttendance(id, m, y)       { return window.electronAPI.getMonthAttendance(id, m, y); }
   async function getBulkAttendance(date)            { return window.electronAPI.getBulkAttendance(date); }
   async function getAttendanceSummary(id, m, y)     { return window.electronAPI.getAttendanceSummary(id, m, y); }
+  async function exportAttendanceRegister(m, y, fmt){ return window.electronAPI.exportAttendanceRegister(m, y, fmt); }
 
   // ── Advances ────────────────────────────────────────────────────────────
   async function getAdvances(filter)   { return window.electronAPI.getAdvances(filter); }
@@ -90,10 +99,16 @@ const API = (() => {
   async function getDashboardStats()         { return window.electronAPI.getDashboardStats(); }
   async function exportPayslipPdf(id)        { return window.electronAPI.exportPayslipPdf(id); }
   async function exportMonthlyPdf(m, y)      { return window.electronAPI.exportMonthlyPdf(m, y); }
+  async function exportCalendarPdf(id, m, y) { return window.electronAPI.exportCalendarPdf(id, m, y); }
   async function exportMonthlyExcel(m, y)    { return window.electronAPI.exportMonthlyExcel(m, y); }
   async function exportEmployeeExcel(empId)  { return window.electronAPI.exportEmployeeExcel(empId); }
   async function exportDailyAttendanceExcel(date) { return window.electronAPI.exportDailyAttendanceExcel(date); }
+  async function exportDailyManpowerPdf(date) { return window.electronAPI.exportDailyManpowerPdf(date); }
+  async function shareDailyManpowerWhatsApp(date) { return window.electronAPI.shareDailyManpowerWhatsApp(date); }
   async function exportAttendanceRangeExcel(params) { return window.electronAPI.exportAttendanceRangeExcel(params); }
+
+  // ── Utils ───────────────────────────────────────────────────────────────
+  async function openExternalUrl(url)        { return window.electronAPI.openExternalUrl(url); }
 
   // ── Settings ────────────────────────────────────────────────────────────
   async function getSettings()               { return window.electronAPI.getSettings(); }
@@ -103,6 +118,56 @@ const API = (() => {
   async function exportBackup() { return window.electronAPI.exportBackup(); }
   async function importBackup() { return window.electronAPI.importBackup(); }
 
+  // ── Staff Documents ───────────────────────────────────────────────────────
+  async function getStaffDocs(filter) { return window.electronAPI.getStaffDocs(filter); }
+  async function uploadStaffDoc(data) { return window.electronAPI.uploadStaffDoc(data); }
+  async function deleteStaffDoc(id)   { return window.electronAPI.deleteStaffDoc(id); }
+  async function previewStaffDoc(id)  { return window.electronAPI.previewStaffDoc(id); }
+  async function runStaffDocOcr(id)   { return window.electronAPI.runStaffDocOcr(id); }
+  async function updateStaffDocOcr(data) { return window.electronAPI.updateStaffDocOcr(data); }
+  async function mapOcrToProfile(data) { return window.electronAPI.mapOcrToProfile(data); }
+  async function exportStaffOcrExcel() { return window.electronAPI.exportStaffOcrExcel(); }
+
+  // ── Leaves ───────────────────────────────────────────────────────────────
+  async function getLeaves(filter)      { return window.electronAPI.getLeaves(filter); }
+  async function createLeave(data)      { return window.electronAPI.createLeave(data); }
+  async function updateLeaveStatus(id, s){ return window.electronAPI.updateLeaveStatus(id, s); }
+  async function deleteLeave(id)        { return window.electronAPI.deleteLeave(id); }
+
+  // ── Expenses ─────────────────────────────────────────────────────────────
+  async function getExpenses(filter)    { return window.electronAPI.getExpenses(filter); }
+  async function createExpense(data) {
+    return window.electronAPI.createExpense({
+      ...data,
+      amount: toPaisa(data.amount)
+    });
+  }
+  async function updateExpenseStatus(id, s){ return window.electronAPI.updateExpenseStatus(id, s); }
+  async function deleteExpense(id)        { return window.electronAPI.deleteExpense(id); }
+  async function getUnreimbursedExpenses(id){ return window.electronAPI.getUnreimbursedExpenses(id); }
+
+  // ── Projects ─────────────────────────────────────────────────────────────
+  async function getProjects(filter)    { return window.electronAPI.getProjects(filter); }
+  async function createProject(data)    { return window.electronAPI.createProject(data); }
+  async function updateProject(data)    { return window.electronAPI.updateProject(data); }
+  async function deleteProject(id)      { return window.electronAPI.deleteProject(id); }
+  async function exportProjectCostReport(id){ return window.electronAPI.exportProjectCostReport(id); }
+
+  // ── Site Reports ─────────────────────────────────────────────────────────
+  async function getSiteReports(filter) { return window.electronAPI.getSiteReports(filter); }
+  async function createSiteReport(data) { return window.electronAPI.createSiteReport(data); }
+  async function deleteSiteReport(id)   { return window.electronAPI.deleteSiteReport(id); }
+
+  // ── Audit Logs ───────────────────────────────────────────────────────────
+  async function getAuditLogs(filter)   { return window.electronAPI.getAuditLogs(filter); }
+  async function exportAuditExcel()     { return window.electronAPI.exportAuditExcel(); }
+
+  // ── Alerts & Reminders ───────────────────────────────────────────────────
+  async function getAlerts(filter)      { return window.electronAPI.getAlerts(filter); }
+  async function runAlertRules()        { return window.electronAPI.runAlertRules(); }
+  async function markAlertRead(id, r)   { return window.electronAPI.markAlertRead(id, r); }
+  async function deleteAlert(id)        { return window.electronAPI.deleteAlert(id); }
+
   // ── Expose on API object ─────────────────────────────────────────────────
   return {
     // Money utils (used by every page)
@@ -110,18 +175,32 @@ const API = (() => {
     // Auth
     login, changePassword, getUsers, createUser, deleteUser,
     // Employees
-    getEmployees, getEmployee, createEmployee, updateEmployee, deleteEmployee,
+    getEmployees, getEmployee, createEmployee, updateEmployee, deleteEmployee, updateBalance, getLedger,
     // Attendance
-    markAttendance, getMonthAttendance, getBulkAttendance, getAttendanceSummary,
+    markAttendance, getMonthAttendance, getBulkAttendance, getAttendanceSummary, exportAttendanceRegister,
     // Advances
     getAdvances, getAdvanceSummary, addAdvance, deleteAdvance,
     // Payments
     getPayments, getSalaryCalculation, calculateAll, createPayment, updatePayment, deletePayment,
     // Reports
-    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportMonthlyExcel, exportEmployeeExcel, exportDailyAttendanceExcel, exportAttendanceRangeExcel,
+    getDashboardStats, exportPayslipPdf, exportMonthlyPdf, exportCalendarPdf, exportMonthlyExcel, exportEmployeeExcel, exportDailyAttendanceExcel, exportDailyManpowerPdf, shareDailyManpowerWhatsApp, exportAttendanceRangeExcel,
+    // Utils
+    openExternalUrl,
     // Settings
     getSettings, saveSettings,
     // Backup
     exportBackup, importBackup,
+    // Staff Documents
+    getStaffDocs, uploadStaffDoc, deleteStaffDoc, previewStaffDoc, runStaffDocOcr, updateStaffDocOcr, mapOcrToProfile, exportStaffOcrExcel,
+    // New Modules
+    getLeaves, createLeave, updateLeaveStatus, deleteLeave,
+    getExpenses, createExpense, updateExpenseStatus, deleteExpense, getUnreimbursedExpenses,
+    getProjects, createProject, updateProject, deleteProject, exportProjectCostReport,
+    getSiteReports, createSiteReport, deleteSiteReport,
+    getAuditLogs, exportAuditExcel,
+    getAlerts, runAlertRules, markAlertRead, deleteAlert
   };
 })();
+
+// Ensure it is globally available via window.API since top-level const doesn't attach to window
+window.API = API;
