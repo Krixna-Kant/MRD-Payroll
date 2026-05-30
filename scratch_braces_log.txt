@@ -1,0 +1,191 @@
+9 (depth 1): const AttendancePage = (() => {
+20 (depth 2): function isSunday(dateStr) {
+22 (depth 1): }
+24 (depth 2): function calcOvertime(checkIn, checkOut) {
+32 (depth 1): }
+34 (depth 2): function getDayName(dateStr) {
+37 (depth 1): }
+39 (depth 2): async function init() {
+40 (depth 3): try {
+43 (depth 4): if (preSelected) {
+47 (depth 3): }
+77 (depth 2): }
+78 (depth 1): }
+80 (depth 2): async function initCorrections() {
+90 (depth 1): }
+92 (depth 2): async function loadCorrections() {
+100 (depth 3): if (corrections.length === 0) {
+103 (depth 2): }
+117 (depth 3): ${corrections.map(c => `
+129 (depth 2): `).join('')}
+135 (depth 3): listEl.querySelectorAll('.att-corr-resolve').forEach(btn => {
+136 (depth 4): btn.addEventListener('click', async () => {
+142 (depth 5): if (res.success) {
+148 (depth 4): }
+149 (depth 3): });
+150 (depth 2): });
+153 (depth 3): async function initBulk() {
+187 (depth 4): ${sunday ? `
+192 (depth 3): ` : ''}
+207 (depth 4): document.getElementById('att-date-picker').addEventListener('change', e => {
+210 (depth 3): });
+212 (depth 4): document.getElementById('att-prev-day').addEventListener('click', () => {
+217 (depth 3): });
+219 (depth 4): document.getElementById('att-next-day').addEventListener('click', () => {
+224 (depth 3): });
+226 (depth 4): document.getElementById('att-export-daily-pdf').addEventListener('click', async () => {
+228 (depth 5): try {
+230 (depth 6): if (res.success) {
+234 (depth 5): }
+239 (depth 4): }
+240 (depth 3): });
+242 (depth 4): document.getElementById('att-share-whatsapp').addEventListener('click', async () => {
+244 (depth 5): try {
+246 (depth 6): if (res.success) {
+247 (depth 7): navigator.clipboard.writeText(res.caption).then(() => {
+253 (depth 6): });
+256 (depth 5): }
+261 (depth 4): }
+262 (depth 3): });
+267 (depth 4): document.getElementById('att-send-all-wa').addEventListener('click', () => {
+274 (depth 5): valid.forEach((btn, idx) => {
+279 (depth 4): });
+280 (depth 3): });
+283 (depth 2): }
+285 (depth 3): async function handleExportRegisterBulk(format) {
+288 (depth 4): try {
+293 (depth 5): if (res.success) {
+297 (depth 4): }
+302 (depth 3): }
+303 (depth 2): }
+305 (depth 3): async function loadBulk() {
+309 (depth 4): try {
+313 (depth 5): try {
+316 (depth 4): } catch(e) { console.error('Failed to load projects', e); }
+326 (depth 5): if (records.length === 0) {
+329 (depth 4): }
+333 (depth 5): records.forEach(r => {
+335 (depth 6): if (sunday && !r.status) {
+337 (depth 5): }
+338 (depth 6): stateMap[r.id] = {
+347 (depth 5): };
+348 (depth 4): });
+350 (depth 5): function applyRules(empId) {
+354 (depth 6): if (sunday) {
+355 (depth 7): if (!st.status || st.status === '') {
+357 (depth 6): }
+358 (depth 5): }
+361 (depth 4): }
+363 (depth 5): function checkEditRestriction(dateStr) {
+374 (depth 6): if (diffDays > 2) {
+376 (depth 5): }
+378 (depth 4): }
+380 (depth 5): async function showCorrectionModal(empId, dateStr, currentData) {
+384 (depth 6): Modal.open({
+414 (depth 5): });
+416 (depth 6): document.getElementById('corr-submit-btn').addEventListener('click', async () => {
+423 (depth 7): const res = await API.submitAttendanceCorrection({
+428 (depth 6): });
+430 (depth 7): if (res.success) {
+435 (depth 6): }
+437 (depth 5): });
+438 (depth 4): }
+440 (depth 5): async function autoSaveRow(empId) {
+444 (depth 6): if (check.restricted) {
+447 (depth 5): }
+449 (depth 6): try {
+450 (depth 7): const res = await API.markAttendance({
+461 (depth 6): });
+466 (depth 7): if (tr) {
+469 (depth 6): }
+473 (depth 5): }
+474 (depth 4): }
+477 (depth 5): function renderOT(empId) {
+488 (depth 4): }
+509 (depth 6): ${records.map(r => {
+546 (depth 4): `}).join('')}
+564 (depth 5): listEl.addEventListener('click', async e => {
+566 (depth 6): if (e.target.closest('.att-quick-btn')) {
+571 (depth 7): if (st.isLocked) {
+574 (depth 6): }
+580 (depth 7): listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
+582 (depth 8): if (b.dataset.status !== st.status) {
+586 (depth 7): }
+587 (depth 6): });
+598 (depth 5): }
+601 (depth 6): if (e.target.closest('.att-unlock')) {
+606 (depth 7): listEl.querySelectorAll(`.att-quick-btn[data-id="${empId}"]`).forEach(b => {
+608 (depth 6): });
+614 (depth 5): }
+617 (depth 6): if (e.target.closest('.att-ot-minus')) {
+624 (depth 5): }
+625 (depth 6): if (e.target.closest('.att-ot-plus')) {
+632 (depth 5): }
+635 (depth 6): if (e.target.closest('.att-mark-all')) {
+641 (depth 7): for (const r of records) {
+645 (depth 8): listEl.querySelectorAll(`.att-quick-btn[data-id="${r.id}"]`).forEach(b => {
+647 (depth 9): if (b.dataset.status !== s) {
+651 (depth 8): }
+652 (depth 7): });
+660 (depth 6): }
+666 (depth 5): }
+669 (depth 6): if (e.target.closest('.att-wa-btn')) {
+678 (depth 5): }
+679 (depth 4): });
+681 (depth 5): listEl.addEventListener('change', async e => {
+683 (depth 6): if (e.target.classList.contains('att-time-input')) {
+693 (depth 5): }
+696 (depth 6): if (e.target.classList.contains('att-project-sel')) {
+703 (depth 5): }
+706 (depth 6): if (e.target.classList.contains('att-sunday-check')) {
+712 (depth 5): }
+713 (depth 4): });
+718 (depth 3): }
+719 (depth 2): }
+721 (depth 3): function statusBadge(status) {
+726 (depth 2): }
+729 (depth 3): async function sendWhatsAppMessage(phone, name, status, project, date) {
+730 (depth 4): if (!phone || !phone.trim()) {
+733 (depth 3): }
+734 (depth 4): if (!status) {
+737 (depth 3): }
+752 (depth 4): try {
+754 (depth 5): if (sr.success && sr.settings && sr.settings.company_name) {
+756 (depth 4): }
+757 (depth 3): } catch(_) {}
+776 (depth 2): }
+779 (depth 3): async function initMonthly() {
+827 (depth 2): }
+829 (depth 3): async function handleExportCalendarPdf() {
+831 (depth 4): try {
+833 (depth 5): if (res.success) {
+837 (depth 4): }
+842 (depth 3): }
+843 (depth 2): }
+845 (depth 3): async function handleExportRegister(format) {
+848 (depth 4): try {
+850 (depth 5): if (res.success) {
+854 (depth 4): }
+859 (depth 3): }
+860 (depth 2): }
+862 (depth 3): async function loadMonthly() {
+880 (depth 4): if (sumEl) {
+889 (depth 3): }
+911 (depth 4): for (let d = 1; d <= daysInMonth; d++) {
+920 (depth 5): if (beforeJoin) {
+939 (depth 4): }
+940 (depth 3): }
+945 (depth 4): calEl.querySelectorAll('.att-cal-btn:not(.disabled-cell)').forEach(btn => {
+946 (depth 5): btn.addEventListener('click', async () => {
+949 (depth 6): if (check.restricted) {
+952 (depth 5): }
+960 (depth 6): try {
+962 (depth 7): const res = await API.markAttendance({
+968 (depth 6): });
+975 (depth 7): if (chipsEl) {
+984 (depth 6): }
+989 (depth 5): }
+990 (depth 4): });
+991 (depth 3): });
+992 (depth 2): }
+995 (depth 1): })();

@@ -15,158 +15,164 @@ const fs = require('fs');
 module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
 
   // ── Dashboard Statistics ───────────────────────────────────────────────────
-  ipcMain.handle('reports:dashboard', async () => {
+  ipcMain.handle('reports:dashboard', async (event, params = {}) => {
     try {
       const now = new Date();
+      const month = params.month || (now.getMonth() + 1);
+      const year  = params.year  || now.getFullYear();
       const db = getDB();
-      const month = now.getMonth() + 1;
-      const year  = now.getFullYear();
+      const today = now.toISOString().split('T')[0];
+      const currentHour = now.getHours();
 
+      // 1. Core Counts
       const totalEmployees = db.prepare(`SELECT COUNT(*) as n FROM employees WHERE status = 'active'`).get().n;
-      const totalPayroll   = db.prepare(`SELECT COALESCE(SUM(salary), 0) as total FROM employees WHERE status = 'active'`).get().total;
+      const totalEmployeesTrend = db.prepare(`SELECT COUNT(*) as n FROM employees WHERE created_at >= (strftime('%s', 'now') - 2592000)`).get().n;
       
-      // This month's data
-      const thisMonthAdvances = db.prepare(`
-        SELECT COALESCE(SUM(amount), 0) as total FROM advances WHERE month = ? AND year = ?
-      `).get(month, year).total;
+      // 2. Today's Snapshot
+      const todayAtt = db.prepare(`SELECT status FROM attendance WHERE date = ?`).all(today);
+      const presentToday = todayAtt.filter(a => a.status === 'P' || a.status === 'H').length;
+      const absentToday  = todayAtt.filter(a => a.status === 'A').length;
+      const onLeaveToday = db.prepare(`SELECT COUNT(DISTINCT employee_id) as n FROM leaves WHERE status = 'approved' AND from_date <= ? AND to_date >= ?`).get(today, today).n;
 
-      const totalPaidThisMonth = db.prepare(`
-         SELECT COALESCE(SUM(net_paid), 0) as total FROM payments WHERE month = ? AND year = ? AND status = 'paid'
-      `).get(month, year).total;
-
-      const paidCountThisMonth = db.prepare(`
-        SELECT COUNT(*) as n FROM payments WHERE month = ? AND year = ? AND status = 'paid'
-      `).get(month, year).n;
-
-      const pendingCount = totalEmployees - paidCountThisMonth;
-
-      // NEW LEDGER-BASED KPI CALCULATIONS
+      // 3. Financials
       const balanceStats = db.prepare(`
         SELECT 
           COALESCE(SUM(CASE WHEN CAST(balance AS REAL) < 0 THEN ABS(CAST(balance AS REAL)) ELSE 0 END), 0) as total_advances,
-          COALESCE(SUM(CASE WHEN CAST(balance AS REAL) > 0 THEN CAST(balance AS REAL) ELSE 0 END), 0) as pending_salary,
-          COALESCE(SUM(CAST(balance AS REAL)), 0) as net_balance
-        FROM employees 
-        WHERE status = 'active'
+          COALESCE(SUM(CASE WHEN CAST(balance AS REAL) > 0 THEN CAST(balance AS REAL) ELSE 0 END), 0) as pending_salary
+        FROM employees WHERE status = 'active'
       `).get();
-
       const outstandingAdvances = balanceStats.total_advances;
-      const salaryRemainingToPay = balanceStats.pending_salary;
-      const netGlobalBalance    = balanceStats.net_balance;
+      const totalPaidThisMonth = db.prepare(`SELECT COALESCE(SUM(net_paid), 0) as total FROM payments WHERE month = ? AND year = ? AND status = 'paid'`).get(month, year).total;
 
-      // Recent 5 payments
-      const recentPayments = db.prepare(`
-        SELECT p.*, e.name as employee_name
-        FROM payments p JOIN employees e ON e.id = p.employee_id
-        ORDER BY p.created_at DESC LIMIT 5
-      `).all();
-
-      // Recent 5 advances
-      const recentAdvances = db.prepare(`
-        SELECT a.*, e.name as employee_name
-        FROM advances a JOIN employees e ON e.id = a.employee_id
-        ORDER BY a.created_at DESC LIMIT 5
-      `).all();
-
-      // Today's Attendance snapshot
-      const today = now.toISOString().split('T')[0];
-      const todayAtt = db.prepare(`
-        SELECT a.status, a.project_name, e.name
-        FROM attendance a JOIN employees e ON e.id = a.employee_id
-        WHERE a.date = ?
-      `).all(today);
-
-      const presentTodayList = [];
-      const absentTodayList = [];
-      const projectSums = {};
-
-      todayAtt.forEach(r => {
-        if (r.status === 'P' || r.status === 'H') presentTodayList.push(r.name);
-        else if (r.status === 'A') absentTodayList.push(r.name);
-        if (r.project_name) projectSums[r.project_name] = (projectSums[r.project_name] || 0) + 1;
-      });
-
-      // Company Name
-      const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'Our Company';
-
-      // Leaves, Expenses, Projects
-      const leavesTodayCount = db.prepare(`SELECT COUNT(DISTINCT employee_id) as n FROM leaves WHERE status = 'approved' AND from_date <= ? AND to_date >= ?`).get(today, today).n;
-      const pendingLeavesCount = db.prepare(`SELECT COUNT(*) as n FROM leaves WHERE status = 'pending'`).get().n;
-      const todayExpenses = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date = ? AND status = 'approved'`).get(today).total;
-      const monthlyExpenses = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date LIKE ? AND status = 'approved'`).get(`${year}-${String(month).padStart(2, '0')}-%`).total;
-      const pendingExpensesCount = db.prepare(`SELECT COUNT(*) as n FROM expenses WHERE status = 'pending'`).get().n;
-      const activeProjectsCount = db.prepare(`SELECT COUNT(*) as n FROM projects WHERE status IN ('Ongoing', 'Upcoming')`).get().n;
-      const delayedProjectsCount = db.prepare(`SELECT COUNT(*) as n FROM projects WHERE status = 'Delayed'`).get().n;
-
-      const recentActivities = db.prepare(`SELECT * FROM activity_logs ORDER BY timestamp DESC LIMIT 6`).all();
-      const alertSummary = db.prepare(`SELECT SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread, SUM(CASE WHEN is_read = 0 AND type = 'Critical' THEN 1 ELSE 0 END) as critical FROM alerts`).get() || { unread: 0, critical: 0 };
-
-      // Labour Cost by Project (This Month)
-      const firstDayOfMonth = `${year}-${String(month).padStart(2, '0')}-01`;
-      const lastDayOfMonth  = `${year}-${String(month).padStart(2, '0')}-31`;
+      // 4. Pending Approvals
+      const pendingLeaves = db.prepare(`SELECT COUNT(*) as n FROM leaves WHERE status = 'pending'`).get().n;
+      const pendingExpenses = db.prepare(`SELECT COUNT(*) as n FROM expenses WHERE status = 'pending'`).get().n;
+      const pendingAdvances = db.prepare(`SELECT COUNT(*) as n FROM advance_requests WHERE status = 'pending'`).get().n;
+      const pendingCorrections = db.prepare(`SELECT COUNT(*) as n FROM attendance_corrections WHERE status = 'pending'`).get().n;
       
-      const laborCostData = db.prepare(`
-        SELECT a.project_name, SUM(e.salary / 30.0) as cost
-        FROM attendance a
-        JOIN employees e ON e.id = a.employee_id
-        WHERE a.date >= ? AND a.date <= ? AND a.status IN ('P', 'H')
-        GROUP BY a.project_name
-        ORDER BY cost DESC
-      `).all(firstDayOfMonth, lastDayOfMonth);
+      const paidCountThisMonth = db.prepare(`SELECT COUNT(*) as n FROM payments WHERE month = ? AND year = ? AND status = 'paid'`).get(month, year).n;
+      const pendingPayroll = Math.max(0, totalEmployees - paidCountThisMonth);
 
-      // Monthly Attendance Trends (Last 6 Months)
-      const monthlyTrends = [];
-      const current = new Date();
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(current.getFullYear(), current.getMonth() - i, 1);
+      // 5. Attendance Trend (Last 5 Months)
+      const attendanceTrend = [];
+      for (let i = 4; i >= 0; i--) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - i);
         const m = d.getMonth() + 1;
         const y = d.getFullYear();
         const mStr = String(m).padStart(2, '0');
-        const monthLabel = d.toLocaleString('default', { month: 'short' });
         
-        // Match both YYYY-MM and DD-MM-YYYY formats just in case
-        const count = db.prepare(`
-          SELECT COUNT(*) as n FROM attendance 
-          WHERE (date LIKE ? OR date LIKE ?) AND status IN ('P', 'H')
-        `).get(`${y}-${mStr}%`, `%-${mStr}-${y}`).n;
+        const attStats = db.prepare(`
+          SELECT 
+            SUM(CASE WHEN status IN ('P','H') THEN 1 ELSE 0 END) as present,
+            SUM(CASE WHEN status = 'A' THEN 1 ELSE 0 END) as absent
+          FROM attendance WHERE (date LIKE ? OR date LIKE ?)
+        `).get(`${y}-${mStr}-%`, `%-${mStr}-${y}`);
         
-        monthlyTrends.push({ label: monthLabel, value: count });
+        const leaveCountTrend = db.prepare(`
+          SELECT COUNT(DISTINCT employee_id) as n FROM leaves 
+          WHERE status = 'approved' AND (from_date LIKE ? OR to_date LIKE ? OR (from_date <= ? AND to_date >= ?))
+        `).get(`${y}-${mStr}-%`, `${y}-${mStr}-%`, `${y}-${mStr}-01`, `${y}-${mStr}-28`).n;
+
+        attendanceTrend.push({
+          month: d.toLocaleString('default', { month: 'short' }),
+          present: attStats.present || 0,
+          absent: attStats.absent || 0,
+          onLeave: leaveCountTrend || 0
+        });
       }
 
-      // Breakdown of Outstanding Advances
-      const advanceBreakdown = db.prepare(`
-        SELECT id, name, CAST(balance AS REAL) as amount
-        FROM employees 
-        WHERE CAST(balance AS REAL) < 0
-        ORDER BY CAST(balance AS REAL) ASC
-      `).all().map(e => ({ id: e.id, name: e.name, amount: Math.abs(e.amount) }));
-      
-      console.log(`[Dashboard IPC] Found ${advanceBreakdown.length} employees with advances. Total KPI: ${balanceStats.total_advances}`);
+      // 6. Project Status (Top 4)
+      const projectStatus = db.prepare(`
+        SELECT name, progress, status FROM projects 
+        WHERE status IN ('Ongoing', 'Upcoming', 'Delayed')
+          AND (project_type IS NULL OR project_type != 'Internal Department')
+        ORDER BY progress DESC LIMIT 4
+      `).all();
 
-      console.log('[Reports] Dashboard Stats Generated:', { 
-        monthlyTrends, 
-        laborCost: laborCostData.length,
-        advanceBreakdown: advanceBreakdown.length
-      });
-
-      return {
-        success: true,
-        stats: {
-          totalEmployees, totalPayroll, thisMonthAdvances, totalPaidThisMonth,
-          salaryRemainingToPay, outstandingAdvances, netGlobalBalance, pendingCount,
-          paidThisMonth: paidCountThisMonth, currentMonth: month, currentYear: year,
-          recentPayments, recentAdvances, recentActivities, companyName,
-          projectsStats: { active: activeProjectsCount, delayed: delayedProjectsCount },
-          leavesStats: { today: leavesTodayCount, pending: pendingLeavesCount },
-          expensesStats: { today: todayExpenses, monthly: monthlyExpenses, pending: pendingExpensesCount },
-          alertStats: alertSummary,
-          todayAttendance: { presentNames: presentTodayList, absentNames: absentTodayList, projectSums: projectSums },
-          laborCostByProject: laborCostData,
-          advanceBreakdown: advanceBreakdown
-        }
+      // 7. Site Reports Summary (Today)
+      const ongoingProjectIds = db.prepare(`SELECT id FROM projects WHERE status = 'Ongoing' AND (project_type IS NULL OR project_type != 'Internal Department')`).all().map(p => p.id);
+      const submittedTodayCount = db.prepare(`SELECT COUNT(DISTINCT project_id) as n FROM site_reports WHERE date = ?`).get(today).n;
+      const siteReportsSummary = {
+        submitted: submittedTodayCount,
+        pending: Math.max(0, ongoingProjectIds.length - submittedTodayCount),
+        overdue: (currentHour >= 19) ? Math.max(0, ongoingProjectIds.length - submittedTodayCount) : 0
       };
+
+      // 8. Documents OCR Summary
+      const docsSummary = db.prepare(`
+        SELECT 
+          COUNT(*) as total,
+          SUM(CASE WHEN ocr_status = 'completed' THEN 1 ELSE 0 END) as processed,
+          SUM(CASE WHEN ocr_status = 'pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN ocr_status = 'failed' THEN 1 ELSE 0 END) as failed
+        FROM staff_documents
+      `).get() || { total: 0, processed: 0, pending: 0, failed: 0 };
+
+      // 9. Upcoming Birthdays
+      const upcomingBirthdays = db.prepare(`
+        SELECT name, role, dob 
+        FROM employees 
+        WHERE strftime('%m-%d', dob) >= strftime('%m-%d', 'now')
+        ORDER BY strftime('%m-%d', dob) ASC
+        LIMIT 2
+      `).all();
+
+      // 10. Alerts Summary (Aggregated)
+      const alertsSummary = db.prepare(`
+        SELECT module, COUNT(*) as count 
+        FROM alerts WHERE is_read = 0 
+        GROUP BY module
+      `).all();
+      const totalUnreadAlerts = alertsSummary.reduce((sum, a) => sum + a.count, 0);
+
+      const stats = {
+        totalEmployees,
+        totalEmployeesTrend,
+        todayAttendance: {
+          present: presentToday,
+          absent: absentToday,
+          onLeave: onLeaveToday,
+          total: totalEmployees
+        },
+        outstandingAdvances,
+        totalPaidThisMonth,
+        attendanceTrend,
+        projectStatus,
+        siteReportsSummary,
+        docsSummary,
+        upcomingBirthdays,
+        alertsSummary,
+        totalUnreadAlerts,
+        pendingApprovals: {
+          leaves: pendingLeaves,
+          expenses: pendingExpenses,
+          advances: pendingAdvances,
+          corrections: pendingCorrections,
+          payroll: pendingPayroll,
+          total: pendingLeaves + pendingExpenses + pendingAdvances + pendingCorrections
+        },
+        labourCostByProject: db.prepare(`
+          SELECT 
+            p.name,
+            p.progress,
+            COALESCE(SUM(CAST(e.salary AS REAL) / 26), 0) as cost
+          FROM projects p
+          JOIN attendance a ON p.id = a.project_id
+          JOIN employees e ON a.employee_id = e.id
+          WHERE a.date LIKE ? AND (p.project_type IS NULL OR p.project_type != 'Internal Department')
+          GROUP BY p.id
+          ORDER BY cost DESC
+          LIMIT 5
+        `).all(`${year}-${String(month).padStart(2, '0')}-%`),
+        currentMonth: month,
+        currentYear: year,
+        companyName: db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'WorkForce Pro'
+      };
+
+      return { success: true, stats };
     } catch (err) {
-      console.error('[Reports IPC] Dashboard error:', err);
+      console.error('[Reports IPC] Error generating dashboard stats:', err);
       return { success: false, error: err.message };
     }
   });
@@ -270,7 +276,7 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
     const db = getDB();
     const records = db.prepare(`
       SELECT e.id, e.name, e.role, e.joining_date,
-             a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+             a.status, a.in_time AS check_in, a.out_time AS check_out, a.overtime_hours, a.is_sunday_work, a.project_name
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
       WHERE e.status = 'active'
@@ -301,7 +307,7 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
     const placeholders = employeeIds.map(() => '?').join(',');
     const query = `
       SELECT e.id, e.name, e.role, e.joining_date,
-             a.date, a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+             a.date, a.status, a.in_time AS check_in, a.out_time AS check_out, a.overtime_hours, a.is_sunday_work, a.project_name
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date >= ? AND a.date <= ?
       WHERE e.id IN (${placeholders})
@@ -349,7 +355,7 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
 
     const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
       title: 'Save Calendar PDF',
-      defaultPath: `Calendar_${employee.name.replace(/\\s+/g, '_')}_${month}_${year}.pdf`,
+      defaultPath: `Calendar_${employee.name.replace(/\s+/g, '_')}_${month}_${year}.pdf`,
       filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
     });
 
@@ -368,11 +374,10 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
   ipcMain.handle('reports:dailyManpowerPdf', async (event, date) => {
     const db = getDB();
     const reqDate = new Date(date);
-    const isSun = reqDate.getDay() === 0;
     
     const records = db.prepare(`
       SELECT e.name, e.role,
-             a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+             a.status, a.in_time AS check_in, a.out_time AS check_out, a.overtime_hours, a.is_sunday_work, a.project_name
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
       WHERE e.status = 'active'
@@ -407,7 +412,7 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
     
     const records = db.prepare(`
       SELECT e.name, e.role,
-             a.status, a.check_in, a.check_out, a.overtime_hours, a.is_sunday_work, a.project_name
+             a.status, a.in_time AS check_in, a.out_time AS check_out, a.overtime_hours, a.is_sunday_work, a.project_name
       FROM employees e
       LEFT JOIN attendance a ON a.employee_id = e.id AND a.date = ?
       WHERE e.status = 'active'
@@ -420,17 +425,24 @@ module.exports = function registerReportHandlers(ipcMain, getMainWindow) {
     const companyName = db.prepare(`SELECT value FROM settings WHERE key = 'company_name'`).get()?.value || 'Company Name';
     const summary = extractSummary(records);
 
-    const { filePath } = await dialog.showSaveDialog(getMainWindow(), {
-      title: 'Save HD Image for WhatsApp',
-      defaultPath: `Daily_Manpower_Report_${date}.png`,
-      filters: [{ name: 'Image Files', extensions: ['png'] }]
-    });
-
-    if (!filePath) return { success: false, error: 'Cancelled.' };
+    const { app, clipboard, nativeImage } = require('electron');
+    const tempDir = app.getPath('temp');
+    const tempFilePath = path.join(tempDir, `Daily_Manpower_Report_${date}.png`);
 
     try {
-      await generateManpowerImage(records, date, companyName, filePath);
+      await generateManpowerImage(records, date, companyName, tempFilePath);
       
+      // Load image and copy to system clipboard
+      const img = nativeImage.createFromPath(tempFilePath);
+      clipboard.writeImage(img);
+
+      // Clean up temp file
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (err) {
+        console.error('Failed to delete temp file:', err);
+      }
+
       const [y, m, d] = date.split('-');
       const formattedDate = `${d}-${m}-${y}`;
       const caption = `Daily Manpower Report
@@ -440,7 +452,7 @@ Total: ${summary.total}
 Present: ${summary.pCount} | Absent: ${summary.aCount} | WO: ${summary.woCount}
 OT: ${summary.totalOt} hrs`;
 
-      return { success: true, filePath, caption };
+      return { success: true, clipboardCopied: true, caption };
     } catch (err) {
       console.error('[reports:dailyManpowerImage] Error:', err);
       return { success: false, error: err.message };

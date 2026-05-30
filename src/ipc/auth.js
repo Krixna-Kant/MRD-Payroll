@@ -17,6 +17,28 @@ module.exports = function registerAuthHandlers(ipcMain) {
     const match = bcrypt.compareSync(password, user.password_hash);
     if (!match) return { success: false, error: 'Invalid username or password.' };
 
+    // --- SESSION LOCK CHECK ---
+    const activeUserQuery = db.prepare(`SELECT value FROM settings WHERE key = 'active_user'`).get();
+    const lastSeenQuery = db.prepare(`SELECT value FROM settings WHERE key = 'active_user_last_seen'`).get();
+    
+    if (activeUserQuery && lastSeenQuery) {
+      const activeUser = activeUserQuery.value;
+      const lastSeen = parseInt(lastSeenQuery.value, 10);
+      const now = Date.now();
+      
+      // If someone else is logged in and their heartbeat is within 60s
+      if (activeUser && activeUser !== user.username && (now - lastSeen < 60000)) {
+        return { success: false, error: `${activeUser} is currently using the application. Please try again later.` };
+      }
+    }
+    
+    // Acquire Lock
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_user', ?)`).run(user.username);
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_user_last_seen', ?)`).run(Date.now().toString());
+
+    const { logActivity } = require('../utils/audit');
+    logActivity('Auth', 'Login', `${user.full_name || user.username} logged into the system`, null, null, user);
+
     return {
       success: true,
       user: {
@@ -27,6 +49,24 @@ module.exports = function registerAuthHandlers(ipcMain) {
         mustChangePassword: user.must_change_password === 1,
       }
     };
+  });
+
+  // ── Logout ─────────────────────────────────────────────────────────────────
+  ipcMain.handle('auth:logout', async (_, { user }) => {
+    const db = getDB();
+    db.prepare(`UPDATE settings SET value = '' WHERE key = 'active_user'`).run();
+    
+    const { logActivity } = require('../utils/audit');
+    logActivity('Auth', 'Logout', `${user.fullName || user.username} logged out`, null, null, user);
+    return { success: true };
+  });
+
+  // ── Heartbeat ──────────────────────────────────────────────────────────────
+  ipcMain.handle('auth:heartbeat', async (_, { username }) => {
+    const db = getDB();
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_user_last_seen', ?)`).run(Date.now().toString());
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_user', ?)`).run(username);
+    return { success: true };
   });
 
   // ── Change Password ──────────────────────────────────────────────────────
@@ -66,7 +106,7 @@ module.exports = function registerAuthHandlers(ipcMain) {
     const result = db.prepare(`
       INSERT INTO users (username, password_hash, full_name, role, must_change_password)
       VALUES (?, ?, ?, ?, 1)
-    `).run(hash, fullName || username, role || 'staff', username);
+    `).run(username, hash, fullName || username, role || 'staff');
     return { success: true, userId: result.lastInsertRowid };
   });
 

@@ -8,9 +8,16 @@ const SettingsPage = (() => {
   const headerActs = () => document.getElementById('page-header-actions');
 
   async function init() {
-    headerActs().innerHTML = '';
     const currentUser = AppState.get('user');
     const isAdmin = currentUser?.role === 'admin';
+    const settings = AppState.get('settings') || {};
+
+    if (currentUser?.role === 'hr' && settings.hr_access_settings !== '1') {
+      Toast.error("Access Denied: HR cannot access system settings.");
+      Router.navigate('dashboard');
+      return;
+    }
+    headerActs().innerHTML = '';
 
     // Fetch settings from DB via payments IPC (reuse reports as settings handler is inline)
     // We'll read from the page state and let user configure
@@ -106,6 +113,51 @@ const SettingsPage = (() => {
           </div>
         </div>
 
+        <!-- HR Permissions (admin only) -->
+        <div class="card ${isAdmin ? '' : 'hidden'} mt-4">
+          <div class="card-title">HR Role Permissions
+            ${!isAdmin ? '<span class="badge badge-muted" style="margin-left:8px">Admin Only</span>' : ''}
+          </div>
+          ${!isAdmin
+            ? `<p class="text-muted text-sm">Only admins can manage HR permissions.</p>`
+            : `
+              <p class="text-xs text-muted mb-3">By default, HR is restricted to basic staff & attendance management. Use these toggles to grant extra access.</p>
+              <div class="form-group mt-3">
+                <label class="form-label" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-financials" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow access to Payments, Expenses, & Reports
+                </label>
+                <label class="form-label mt-2" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-audit" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow access to System Audit Logs
+                </label>
+                <label class="form-label mt-2" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-settings" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow access to System Settings
+                </label>
+                <label class="form-label mt-2" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-salary" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow editing Employee Salary & Adjusting Advances
+                </label>
+                <label class="form-label mt-2" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-delete" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow deleting Employees, Documents, & Projects
+                </label>
+                <label class="form-label mt-2" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input id="set-hr-past-att" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent)" />
+                  Allow editing Historic Attendance (older than 2 days)
+                </label>
+              </div>
+              <div class="mt-4">
+                <button id="set-save-hr-perms" class="btn btn-primary">
+                  <span class="btn-text">Save Permissions</span>
+                  <span class="btn-loader" hidden></span>
+                </button>
+              </div>
+            `
+          }
+        </div>
+
       </div>
 
       <!-- About -->
@@ -113,7 +165,7 @@ const SettingsPage = (() => {
         <div style="font-size:2rem;margin-bottom:8px">₹</div>
         <div style="font-size:1.1rem;font-weight:700;margin-bottom:4px">LocalPayroll</div>
         <div class="text-muted text-sm">v1.1.0 · Offline-first payroll for small businesses</div>
-        <div class="text-muted text-sm mt-3">Data stored locally at: <code>%APPDATA%/LocalPayroll/payroll.db</code></div>
+        <div class="text-muted text-sm mt-3">Data stored locally at: <code id="set-db-path-display">Detecting...</code></div>
       </div>
     `;
 
@@ -124,6 +176,13 @@ const SettingsPage = (() => {
   }
 
   async function loadSettings() {
+    // Load Database Path
+    const dbPathRes = await API.getDbPath();
+    if (dbPathRes.success && dbPathRes.dbPath) {
+      const displayEl = document.getElementById('set-db-path-display');
+      if (displayEl) displayEl.textContent = dbPathRes.dbPath;
+    }
+
     const res = await API.getSettings();
     if (!res.success) return;
     const s = res.settings;
@@ -133,6 +192,16 @@ const SettingsPage = (() => {
     if (s.use_attendance) document.getElementById('set-att-toggle').checked = s.use_attendance === '1';
     if (s.enable_sunday_ot) document.getElementById('set-sunday-ot').checked = s.enable_sunday_ot === '1';
     if (s.enable_weekly_off) document.getElementById('set-weekly-off').checked = s.enable_weekly_off === '1';
+    
+    // Load HR permissions
+    if (document.getElementById('set-hr-financials')) {
+      document.getElementById('set-hr-financials').checked = s.hr_access_financials === '1';
+      document.getElementById('set-hr-audit').checked = s.hr_access_audit === '1';
+      document.getElementById('set-hr-settings').checked = s.hr_access_settings === '1';
+      document.getElementById('set-hr-salary').checked = s.hr_edit_salary === '1';
+      document.getElementById('set-hr-delete').checked = s.hr_delete_access === '1';
+      document.getElementById('set-hr-past-att').checked = s.hr_edit_past_attendance === '1';
+    }
     
     if (s.projects_list) {
       try {
@@ -190,9 +259,20 @@ const SettingsPage = (() => {
       const projStr       = document.getElementById('set-projects').value.trim();
       const projectsArr   = projStr.split(',').map(s => s.trim()).filter(Boolean);
       const projects_list = JSON.stringify(projectsArr);
+      
+      const payload = { company_name, working_days, use_attendance, enable_sunday_ot, enable_weekly_off, projects_list };
+      
+      if (isAdmin && document.getElementById('set-hr-financials')) {
+        payload.hr_access_financials = document.getElementById('set-hr-financials').checked ? '1' : '0';
+        payload.hr_access_audit      = document.getElementById('set-hr-audit').checked ? '1' : '0';
+        payload.hr_access_settings   = document.getElementById('set-hr-settings').checked ? '1' : '0';
+        payload.hr_edit_salary       = document.getElementById('set-hr-salary').checked ? '1' : '0';
+        payload.hr_delete_access     = document.getElementById('set-hr-delete').checked ? '1' : '0';
+        payload.hr_edit_past_attendance = document.getElementById('set-hr-past-att').checked ? '1' : '0';
+      }
 
       Helpers.setLoading('set-save-config', true);
-      const res = await API.saveSettings({ company_name, working_days, use_attendance, enable_sunday_ot, enable_weekly_off, projects_list });
+      const res = await API.saveSettings(payload);
       Helpers.setLoading('set-save-config', false);
 
       if (res.success) {
@@ -270,6 +350,34 @@ const SettingsPage = (() => {
           Toast.success('User created!');
           await loadUsers();
         });
+      });
+    }
+
+    // Save HR permissions (admin only)
+    if (isAdmin && document.getElementById('set-save-hr-perms')) {
+      document.getElementById('set-save-hr-perms').addEventListener('click', async () => {
+        const payload = {
+          hr_access_financials: document.getElementById('set-hr-financials').checked ? '1' : '0',
+          hr_access_audit:      document.getElementById('set-hr-audit').checked ? '1' : '0',
+          hr_access_settings:   document.getElementById('set-hr-settings').checked ? '1' : '0',
+          hr_edit_salary:       document.getElementById('set-hr-salary').checked ? '1' : '0',
+          hr_delete_access:     document.getElementById('set-hr-delete').checked ? '1' : '0',
+          hr_edit_past_attendance: document.getElementById('set-hr-past-att').checked ? '1' : '0'
+        };
+
+        Helpers.setLoading('set-save-hr-perms', true);
+        const res = await API.saveSettings(payload);
+        Helpers.setLoading('set-save-hr-perms', false);
+
+        if (res.success) {
+          Toast.success('HR Permissions saved successfully!');
+          // Update AppState for immediate client application settings updates
+          const currentSettings = AppState.get('settings') || {};
+          Object.assign(currentSettings, payload);
+          AppState.set('settings', currentSettings);
+        } else {
+          Toast.error('Failed to save permissions: ' + res.error);
+        }
       });
     }
   }

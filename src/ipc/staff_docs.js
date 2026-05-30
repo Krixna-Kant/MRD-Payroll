@@ -75,6 +75,7 @@ module.exports = (ipcMain) => {
 
       // Audit Log
       const { logActivity } = require('../utils/audit');
+      // For now we don't have createdBy in upload arg, I'll update renderer or let logActivity handle it if I pass null
       logActivity('Documents', 'Uploaded', `Uploaded ${docType} for ${emp.name}`, null, `File: ${fileName}`);
 
       return { success: true, docId: result.lastInsertRowid };
@@ -95,6 +96,7 @@ module.exports = (ipcMain) => {
       // Audit Log
       if (doc) {
         const { logActivity } = require('../utils/audit');
+        // No operatorId here yet
         logActivity('Documents', 'Deleted', `Deleted ${doc.document_type} for ${doc.employee_name}`, `File: ${doc.document_name}`, null);
       }
 
@@ -247,6 +249,137 @@ module.exports = (ipcMain) => {
 
       await workbook.xlsx.writeFile(filePath);
       return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── Compile All Documents into PDF ─────────────────────────────────────────
+  ipcMain.handle('staffDocs:compileAll', async (event, { employeeId }) => {
+    try {
+      const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(employeeId);
+      if (!emp) throw new Error('Employee not found');
+
+      const docs = db.prepare('SELECT * FROM staff_documents WHERE employee_id = ? ORDER BY upload_date DESC').all(employeeId);
+      if (!docs || docs.length === 0) {
+        throw new Error('No uploaded documents found for this employee.');
+      }
+
+      const { filePath } = await dialog.showSaveDialog({
+        title: `Download All Documents — ${emp.name}`,
+        defaultPath: path.join(app.getPath('downloads'), `${emp.name.replace(/[^a-z0-9]/gi, '_')}_all_documents.pdf`),
+        filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+      });
+
+      if (!filePath) return { success: false, error: 'Cancelled.' };
+
+      const tempCoverPath = path.join(app.getPath('temp'), `cover_${employeeId}_${Date.now()}.pdf`);
+      
+      const { generateStaffDossierCover } = require('../utils/pdf');
+      const { PDFDocument: PDFLibDoc, StandardFonts } = require('pdf-lib');
+
+      // 1. Generate cover page PDF
+      await generateStaffDossierCover(emp, docs, tempCoverPath);
+
+      // 2. Read cover page into pdf-lib
+      const mergedPdf = await PDFLibDoc.create();
+      const coverBytes = fs.readFileSync(tempCoverPath);
+      const coverDoc = await PDFLibDoc.load(coverBytes);
+      const copiedCoverPages = await mergedPdf.copyPages(coverDoc, coverDoc.getPageIndices());
+      copiedCoverPages.forEach((page) => mergedPdf.addPage(page));
+
+      const helveticaFont = await mergedPdf.embedFont(StandardFonts.Helvetica);
+
+      // 3. Loop through and append docs
+      for (const d of docs) {
+        if (!d.file_path || !fs.existsSync(d.file_path)) {
+          console.warn(`File not found: ${d.file_path}`);
+          continue;
+        }
+
+        const ext = path.extname(d.file_path).toLowerCase();
+        const fileBytes = fs.readFileSync(d.file_path);
+
+        if (ext === '.pdf') {
+          try {
+            const subDoc = await PDFLibDoc.load(fileBytes);
+            const copiedPages = await mergedPdf.copyPages(subDoc, subDoc.getPageIndices());
+            copiedPages.forEach((page) => mergedPdf.addPage(page));
+          } catch (pdfErr) {
+            console.error(`Failed to load PDF ${d.document_name}:`, pdfErr);
+            const errorPage = mergedPdf.addPage();
+            const { width, height } = errorPage.getSize();
+            errorPage.drawText(`Failed to load PDF: ${d.document_name}`, { x: 50, y: height - 100, size: 14, font: helveticaFont });
+            errorPage.drawText(`Error: ${pdfErr.message}`, { x: 50, y: height - 120, size: 10, font: helveticaFont });
+          }
+        } else if (ext === '.jpg' || ext === '.jpeg' || ext === '.png') {
+          let image;
+          try {
+            if (ext === '.png') {
+              image = await mergedPdf.embedPng(fileBytes);
+            } else {
+              image = await mergedPdf.embedJpg(fileBytes);
+            }
+          } catch (imgErr) {
+            // Try fallback
+            try {
+              if (ext === '.png') {
+                image = await mergedPdf.embedJpg(fileBytes);
+              } else {
+                image = await mergedPdf.embedPng(fileBytes);
+              }
+            } catch (finalErr) {
+              console.error(`Failed to embed image ${d.document_name}:`, finalErr);
+              const errorPage = mergedPdf.addPage();
+              const { width, height } = errorPage.getSize();
+              errorPage.drawText(`Failed to load image: ${d.document_name}`, { x: 50, y: height - 100, size: 14, font: helveticaFont });
+              errorPage.drawText(`Error: ${finalErr.message}`, { x: 50, y: height - 120, size: 10, font: helveticaFont });
+              continue;
+            }
+          }
+
+          if (image) {
+            const page = mergedPdf.addPage();
+            const { width: pageWidth, height: pageHeight } = page.getSize();
+            
+            // Margins
+            const margin = 40;
+            const maxWidth = pageWidth - (margin * 2);
+            const maxHeight = pageHeight - (margin * 2);
+
+            // Scale keeping aspect ratio
+            const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+            const drawWidth = image.width * scale;
+            const drawHeight = image.height * scale;
+
+            // Center image
+            const x = (pageWidth - drawWidth) / 2;
+            const y = (pageHeight - drawHeight) / 2;
+
+            page.drawImage(image, {
+              x,
+              y,
+              width: drawWidth,
+              height: drawHeight,
+            });
+          }
+        }
+      }
+
+      // 4. Save merged PDF to final destination
+      const mergedPdfBytes = await mergedPdf.save();
+      fs.writeFileSync(filePath, mergedPdfBytes);
+
+      // 5. Clean up temporary cover page
+      if (fs.existsSync(tempCoverPath)) {
+        fs.unlinkSync(tempCoverPath);
+      }
+
+      // Audit Log
+      const { logActivity } = require('../utils/audit');
+      logActivity('Documents', 'Compiled PDF', `Compiled and downloaded all documents for ${emp.name}`, null, `Path: ${filePath}`);
+
+      return { success: true, filePath };
     } catch (err) {
       return { success: false, error: err.message };
     }

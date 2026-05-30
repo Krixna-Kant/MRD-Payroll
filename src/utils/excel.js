@@ -502,7 +502,7 @@ async function generateAttendanceRegisterExcel(data, month, year, outputPath) {
 }
 
 // ── Project Cost & Profitability Excel ──────────────────────────────────────
-async function generateProjectCostExcel(project, expenses, attendance, outputPath) {
+async function generateProjectCostExcel(project, expenses, attendance, rentPayments, elecPayments, roomFoodExpenses = [], outputPath) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'LocalPayroll';
   const ws = wb.addWorksheet('Project Report');
@@ -541,9 +541,125 @@ async function generateProjectCostExcel(project, expenses, attendance, outputPat
     ws.addRow([a.date, a.name, a.role || '-', a.status || '-', a.overtime_hours || 0]);
   });
 
+  if (rentPayments.length > 0 || elecPayments.length > 0) {
+    ws.addRow([]);
+    ws.addRow(['Accommodation / Utility Cost Summary']);
+    ws.getRow(ws.rowCount).font = { bold: true };
+    ws.addRow(['Date Paid', 'Room No', 'Type', 'Amount (₹)', 'Mode']);
+    ws.getRow(ws.rowCount).font = { bold: true };
+    
+    let totAcc = 0;
+    rentPayments.forEach(r => {
+      ws.addRow([r.payment_date, r.room_no, 'Rent Payout', rupees(r.amount_paid), r.payment_mode]);
+      totAcc += r.amount_paid;
+    });
+    elecPayments.forEach(e => {
+      ws.addRow([e.payment_date, e.room_no, 'Electricity Bill', rupees(e.total_bill_amount), e.payment_mode || '-']);
+      totAcc += e.total_bill_amount;
+    });
+    ws.addRow(['TOTAL ACCOMMODATION EXPENSES', '', '', rupees(totAcc), '']).font = { bold: true };
+  }
+
+  if (roomFoodExpenses.length > 0) {
+    ws.addRow([]);
+    ws.addRow(['Room Food Expense Summary']);
+    ws.getRow(ws.rowCount).font = { bold: true };
+    ws.addRow(['Date', 'Room No', 'Paid By', 'Employee Name', 'Amount (₹)']);
+    ws.getRow(ws.rowCount).font = { bold: true };
+    
+    let totFoodExp = 0;
+    roomFoodExpenses.forEach(f => {
+      ws.addRow([f.date, f.room_no, f.paid_by, f.employee_name || '-', rupees(f.amount)]);
+      totFoodExp += f.amount;
+    });
+    ws.addRow(['TOTAL ROOM FOOD EXPENSES', '', '', '', rupees(totFoodExp)]).font = { bold: true };
+  }
+
   ws.columns = [
     { width: 20 }, { width: 20 }, { width: 15 }, { width: 20 }, { width: 15 }
   ];
+
+  await wb.xlsx.writeFile(outputPath);
+}
+
+// ── Advance Ledger Excel ─────────────────────────────────────────────────────
+async function generateAdvanceLedgerExcel(employee, advances, recoveries, outstanding, outputPath) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'LocalPayroll';
+
+  const ws = wb.addWorksheet('Advance Ledger');
+
+  // Title
+  ws.mergeCells('A1:G1');
+  const t1 = ws.getCell('A1');
+  t1.value = `Advance Ledger — ${employee.name}`;
+  t1.font  = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  t1.fill  = fillColor('#6366f1');
+  t1.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  // Employee info
+  ws.addRow(['Employee', employee.name, '', 'Role', employee.role || '-', '', '']);
+  ws.addRow(['Phone', employee.phone || '-', '', 'Outstanding', `₹${(outstanding/100).toFixed(2)}`, '', '']);
+  ws.addRow([]);
+
+  // Header
+  const hdr = ws.addRow(['Date', 'Type', 'Advance Given (₹)', 'Recovery (₹)', 'Balance (₹)', 'Mode', 'Notes']);
+  hdr.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill  = fillColor('#1e1e2e');
+    c.alignment = { horizontal: 'center' };
+  });
+  ws.getRow(5).height = 22;
+
+  ws.columns = [
+    { width: 14 }, { width: 14 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 12 }, { width: 30 }
+  ];
+
+  // Merge advances and recoveries, sort by date
+  const allTx = [
+    ...advances.map(a => ({ date: a.date, type: 'Advance Given', debit: a.amount, credit: 0, mode: a.mode, notes: a.notes || '', month: a.month, year: a.year })),
+    ...recoveries.map(r => ({ date: r.date, type: 'Salary Recovery', debit: 0, credit: r.advance_deducted, mode: r.mode, notes: r.notes || `${MONTHS[(r.month||1)-1]} ${r.year} recovery`, month: r.month, year: r.year })),
+  ].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  let runBal = 0;
+  let i = 0;
+  allTx.forEach(tx => {
+    runBal += tx.debit - tx.credit;
+    const row = ws.addRow([
+      tx.date,
+      tx.type,
+      tx.debit > 0 ? rupees(tx.debit) : '',
+      tx.credit > 0 ? rupees(tx.credit) : '',
+      rupees(Math.max(0, runBal)),
+      tx.mode,
+      tx.notes
+    ]);
+    if (i % 2 === 0) row.eachCell(c => { c.fill = fillColor('#f9fafb'); });
+    if (tx.type === 'Advance Given') {
+      row.getCell(3).fill = fillColor('#fee2e2');
+      row.getCell(3).font = { color: { argb: 'FF991b1b' }, bold: true };
+    } else {
+      row.getCell(4).fill = fillColor('#dcfce7');
+      row.getCell(4).font = { color: { argb: 'FF166534' }, bold: true };
+    }
+    [3,4,5].forEach(ci => {
+      const c = row.getCell(ci);
+      if (c.value !== '') { c.numFmt = '₹#,##0.00'; c.alignment = { horizontal: 'right' }; }
+    });
+    i++;
+  });
+
+  // Summary row
+  ws.addRow([]);
+  const totAdv = advances.reduce((s, a) => s + a.amount, 0);
+  const totRec = recoveries.reduce((s, r) => s + r.advance_deducted, 0);
+  const sumRow = ws.addRow(['', 'TOTAL', rupees(totAdv), rupees(totRec), rupees(outstanding), '', '']);
+  sumRow.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill  = fillColor('#6366f1');
+  });
+  [3,4,5].forEach(ci => { sumRow.getCell(ci).numFmt = '₹#,##0.00'; sumRow.getCell(ci).alignment = { horizontal: 'right' }; });
 
   await wb.xlsx.writeFile(outputPath);
 }
@@ -554,5 +670,6 @@ module.exports = {
   generateDailyAttendanceExcel,
   generateAttendanceRangeExcel,
   generateAttendanceRegisterExcel,
-  generateProjectCostExcel
+  generateProjectCostExcel,
+  generateAdvanceLedgerExcel
 };

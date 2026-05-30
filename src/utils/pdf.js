@@ -464,5 +464,97 @@ async function generateAttendanceRegisterPdf(data, month, year, outputPath) {
   });
 }
 
-module.exports = { generatePayslipPdf, generateMonthlyReportPdf, generateAttendanceRegisterPdf };
+/**
+ * Generate a Cover Page PDF for an employee dossier.
+ */
+async function generateStaffDossierCover(employee, docs, outputPath) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const stream = fs.createWriteStream(outputPath);
+    doc.pipe(stream);
+
+    const W = doc.page.width - 100; // usable width
+
+    // ── Header Bar ────────────────────────────────────────────────────────────
+    doc.rect(50, 50, W, 70).fill(C.primary);
+    doc.fillColor(C.white).fontSize(20).font('Helvetica-Bold')
+       .text('LocalPayroll', 70, 68);
+    doc.fontSize(10).font('Helvetica')
+       .text('STAFF DOCUMENT DOSSIER', 70, 94);
+
+    // Right-aligned Employee Name
+    doc.fontSize(12).font('Helvetica-Bold')
+       .text(employee.name.toUpperCase(), 0, 78, { align: 'right' });
+
+    doc.moveDown(2);
+
+    // ── Employee Info Box ─────────────────────────────────────────────────────
+    const infoY = 140;
+    doc.rect(50, infoY, W, 215).fill(C.lightGray);
+    doc.rect(50, infoY, W, 215).lineWidth(0.5).stroke(C.gray);
+
+    const drawInfoRow = (label, val, yOff) => {
+      doc.fillColor(C.gray).fontSize(9).font('Helvetica-Bold')
+         .text(label, 70, infoY + yOff);
+      doc.fillColor(C.text).fontSize(10).font('Helvetica')
+         .text(val || 'N/A', 170, infoY + yOff);
+    };
+
+    drawInfoRow('Full Name:', employee.name, 15);
+    drawInfoRow('Designation:', employee.role, 32);
+    drawInfoRow('Phone Number:', employee.phone, 49);
+    drawInfoRow("Father's Name:", employee.father_name, 66);
+    drawInfoRow('Date of Birth:', employee.dob, 83);
+    drawInfoRow('Gender:', employee.gender, 100);
+    drawInfoRow('Aadhaar Card No:', employee.aadhaar_no, 117);
+    drawInfoRow('PAN Card No:', employee.pan_no, 134);
+    drawInfoRow('Bank Account:', employee.bank_name ? `${employee.bank_name} (A/C: ${employee.account_no || 'N/A'}, IFSC: ${employee.ifsc_code || 'N/A'})` : 'N/A', 151);
+    drawInfoRow('Address:', employee.address, 168);
+    drawInfoRow('Joining Date:', employee.joining_date, 185);
+
+    // ── Compiled Documents Checklist Table ─────────────────────────────────────
+    const tableY = 380;
+    drawTableHeader(doc, 50, tableY, W, 'COMPILED DOCUMENTS CHECKLIST');
+
+    let rowY = tableY + 30;
+    doc.rect(50, rowY, W, 20).fill(C.dark);
+    doc.fillColor(C.white).fontSize(9).font('Helvetica-Bold')
+       .text('Document Type', 70, rowY + 5)
+       .text('Category', 220, rowY + 5)
+       .text('File Name', 355, rowY + 5)
+       .text('Upload Date', 0, rowY + 5, { align: 'right', width: W - 20 });
+
+    rowY += 20;
+
+    docs.forEach((d, i) => {
+      if (rowY > doc.page.height - 60) {
+        doc.addPage();
+        rowY = 50;
+      }
+      if (i % 2 === 0) doc.rect(50, rowY, W, 20).fill('#f9fafb');
+      doc.fillColor(C.text).fontSize(8.5).font('Helvetica')
+         .text(d.document_type || 'N/A', 70, rowY + 5)
+         .text(d.category || 'N/A', 220, rowY + 5)
+         .text(d.document_name || 'N/A', 355, rowY + 5, { width: 140, ellipsis: true })
+         .text(d.upload_date || 'N/A', 0, rowY + 5, { align: 'right', width: W - 20 });
+      rowY += 20;
+    });
+
+    // Footer
+    const finalFooterY = Math.min(rowY + 20, doc.page.height - 40);
+    doc.fillColor(C.gray).fontSize(8).font('Helvetica')
+       .text('This compiled document dossier is computer-generated.', 50, finalFooterY, { align: 'center', width: W });
+
+    doc.end();
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+}
+
+module.exports = { 
+  generatePayslipPdf, 
+  generateMonthlyReportPdf, 
+  generateAttendanceRegisterPdf,
+  generateStaffDossierCover
+};
 

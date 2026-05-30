@@ -4,8 +4,29 @@ const { getDB } = require('../database/db');
 function logActivity(moduleName, action, description, oldValue = null, newValue = null, user = null) {
   try {
     const db = getDB();
-    const userId = user ? user.id : null;
-    const userName = user ? user.name : 'System';
+    let userId = null;
+    let userName = 'System';
+
+    if (user) {
+      if (typeof user === 'object') {
+        userId = user.id || null;
+        userName = user.fullName || user.full_name || user.username || user.name || 'System';
+      } else if (typeof user === 'number') {
+        userId = user;
+        // Try to fetch name if we only have ID
+        try {
+          const u = db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(user);
+          if (u) userName = u.full_name || u.username || 'User ' + user;
+        } catch (e) {}
+      } else if (typeof user === 'string') {
+        userName = user;
+        // Try to fetch ID if we only have username
+        try {
+          const u = db.prepare('SELECT id FROM users WHERE username = ? OR full_name = ?').get(user, user);
+          if (u) userId = u.id;
+        } catch (e) {}
+      }
+    }
     const deviceInfo = `${os.hostname()} - ${os.platform()} ${os.release()}`;
 
     db.prepare(`

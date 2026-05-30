@@ -154,8 +154,11 @@ const Router = (() => {
     activity:   { title: 'Activity Log', sub: 'System audit trail & user actions' },
     alerts:     { title: 'Alerts & Reminders', sub: 'Smart operational monitoring center' },
     leaves:     { title: 'Leave Management', sub: 'Employee leave requests & approvals' },
-    expenses:   { title: 'Expense Claims', sub: 'Project & travel expense reimbursements' },
+    expenses:   { title: 'Food & Travel Allowances', sub: 'Manage staff food and travel allowances' },
+    accommodation: { title: 'Room Rent & Accommodation', sub: 'Manage staff rooms, landlord payments, and electricity readings' },
     'staff-docs': { title: 'Staff Documents', sub: 'Employee identity & compliance' },
+    performance: { title: 'Performance & Bonus', sub: 'Manage employee reviews and bonuses' },
+    assets:     { title: 'Asset Management', sub: 'Track and assign company tools & assets' },
     settings:   { title: 'Settings',   sub: 'Configure app & data'            },
   };
 
@@ -164,7 +167,7 @@ const Router = (() => {
     employees:  () => EmployeesPage.init(),
     projects:   (params) => ProjectsPage.init(params),
     project_dashboard: (params) => ProjectDashboardPage.init(params),
-    attendance: () => AttendancePage.init(),
+    attendance: (params) => AttendancePage.init(params),
     advances:   () => AdvancesPage.init(),
     payments:   () => PaymentsPage.init(),
     reports:    () => ReportsPage.init(),
@@ -172,7 +175,10 @@ const Router = (() => {
     alerts:     () => AlertsPage.init(),
     leaves:     () => LeavesPage.init(),
     expenses:   () => ExpensesPage.init(),
+    accommodation: () => AccommodationPage.init(),
     'staff-docs': () => StaffDocsPage.init(),
+    performance: () => PerformancePage.init(),
+    assets:      () => AssetsPage.init(),
     settings:   () => SettingsPage.init(),
   };
 
@@ -190,19 +196,70 @@ const Router = (() => {
       }
     });
 
-    // Show correct page section
+    // Show correct page section and handle both class-based and attribute-based visibility
     document.querySelectorAll('.page-section').forEach(el => {
-      el.classList.toggle('active', el.id === `page-${page}`);
+      const isActive = el.id === `page-${page}`;
+      el.classList.toggle('active', isActive);
+      el.hidden = !isActive;
     });
 
     // Update page header
     const meta = PAGE_META[page] || {};
+    const headerEl = document.getElementById('page-header');
+    if (headerEl) {
+      headerEl.hidden = (page === 'dashboard');
+    }
     document.getElementById('page-title').textContent = meta.title || page;
     document.getElementById('page-sub').textContent   = meta.sub   || '';
-    document.getElementById('page-header-actions').innerHTML = '';
+    
+    // Add a global refresh/reload button to the header actions as a safety valve
+    document.getElementById('page-header-actions').innerHTML = `
+      <button class="btn btn-ghost btn-icon" onclick="window.location.reload()" title="Refresh Application" style="opacity:0.6 hover:opacity:1">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    `;
 
-    // Init the page module
-    MODULES[page]?.(params);
+    const container = document.getElementById(`page-${page}`);
+    if (container) {
+      container.innerHTML = `
+        <div style="display:flex; justify-content:center; align-items:center; height:300px; width:100%">
+          <div class="btn-loader" style="width:40px; height:40px; border-width:4px; border-top-color:var(--accent)"></div>
+        </div>
+      `;
+    }
+
+    // Init the page module with robust error handling to prevent blank screens
+    setTimeout(async () => {
+      try {
+        await MODULES[page]?.(params);
+      } catch (err) {
+        console.error(`[Router Critical Error] Failed to initialize module "${page}":`, err);
+        
+        if (container) {
+          container.innerHTML = `
+            <div class="empty-state" style="padding:40px">
+              <div class="empty-icon" style="color:var(--danger); font-size:48px; margin-bottom:20px">⚠️</div>
+              <h3 style="color:var(--danger); font-size:1.5rem">Module Rendering Failure</h3>
+              <p style="max-width:500px; margin:10px auto; color:var(--text-muted)">
+                We encountered a serious error while trying to load the <strong>${meta.title || page}</strong> module. 
+                This might be due to a database mismatch or a script failure.
+              </p>
+              
+              <div class="error-detail-box" style="text-align:left; font-family:var(--font-mono); font-size:12px; background:var(--bg-subtle); padding:15px; border-radius:8px; border:1px solid var(--border); max-width:600px; margin:20px auto; overflow-x:auto">
+                <div style="color:var(--danger); font-weight:700; margin-bottom:8px">Error Trace:</div>
+                <div style="white-space:pre-wrap; color:var(--text)">${err.stack || err.message}</div>
+              </div>
+
+              <div class="flex gap-3 justify-center mt-4">
+                <button class="btn btn-primary" onclick="Router.navigate('${page}')" style="padding:10px 24px">🔄 Retry Module</button>
+                <button class="btn btn-secondary" onclick="window.location.reload()" style="padding:10px 24px">🌐 Reload Application</button>
+              </div>
+            </div>
+          `;
+        }
+        Toast.error("Critical module error. Check developer console for details.");
+      }
+    }, 10);
   }
 
   function init() {
@@ -213,6 +270,21 @@ const Router = (() => {
         navigate(el.dataset.page);
       });
     });
+
+    // Check if database was automatically restored from OneDrive on startup
+    if (window.API && window.API.checkStartupSync) {
+      setTimeout(async () => {
+        try {
+          const res = await window.API.checkStartupSync();
+          if (res && res.restored) {
+            Toast.success(`Successfully loaded the latest data from OneDrive! (Backup: ${res.filename})`, 6000);
+          }
+        } catch (e) {
+          console.error('[Sync] Error checking startup sync:', e);
+        }
+      }, 1000);
+    }
+
     // Start on dashboard
     navigate('dashboard');
   }
@@ -259,20 +331,32 @@ const Helpers = (() => {
 
   function monthName(m)      { return MONTH_NAMES[(m || 1) - 1]; }
   function shortMonth(m)     { return SHORT_MONTHS[(m || 1) - 1]; }
-  function todayIso(d)       { return (d || new Date()).toISOString().slice(0, 10); }
+  function todayIso(d) {
+    const date = d || new Date();
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 10);
+  }
   function formatDate(iso)   { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }); }
   function formatDateShort(iso) { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' }); }
+  function formatDateTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts; // Return as is if invalid
+    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' ' + 
+           d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: true });
+  }
 
-  function buildMonthSelect(id, val) {
-    const opts = MONTH_NAMES.map((n, i) =>
+  function buildMonthSelect(id, val, includeAll = false) {
+    let opts = includeAll ? `<option value="">All Months</option>` : '';
+    opts += MONTH_NAMES.map((n, i) =>
       `<option value="${i+1}" ${(i+1) === val ? 'selected' : ''}>${n}</option>`
     ).join('');
     return `<select id="${id}" class="form-select">${opts}</select>`;
   }
 
-  function buildYearSelect(id, val) {
+  function buildYearSelect(id, val, includeAll = false) {
     const cur = new Date().getFullYear();
-    let opts = '';
+    let opts = includeAll ? `<option value="">All Years</option>` : '';
     for (let y = cur + 1; y >= cur - 3; y--) {
       opts += `<option value="${y}" ${y === val ? 'selected' : ''}>${y}</option>`;
     }
@@ -304,9 +388,15 @@ const Helpers = (() => {
     return items.slice(start, start + perPage);
   }
 
+  function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+
   return {
     MONTH_NAMES, SHORT_MONTHS,
-    monthName, shortMonth, todayIso, formatDate, formatDateShort,
+    monthName, shortMonth, todayIso, formatDate, formatDateShort, formatDateTime, formatTime,
     buildMonthSelect, buildYearSelect,
     escapeHtml, debounce, setLoading, paginate,
   };
@@ -324,5 +414,7 @@ document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
    ============================================================================= */
 document.addEventListener('DOMContentLoaded', () => {
   ThemeManager.init();
+  NotificationCenter.init();
+  Chat.init();
   AuthModule.init(); // defined in auth.js
 });

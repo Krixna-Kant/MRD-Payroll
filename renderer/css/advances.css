@@ -1,0 +1,374 @@
+/* =============================================================================
+   LocalPayroll — Advance & Recovery Management System (Premium UI)
+   ============================================================================= */
+
+.adv-v3-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: fadeIn 0.4s ease;
+}
+
+/* ── KPI Grid ────────────────────────────────────────────────────────────── */
+.adv-v3-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+
+.adv-v3-kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+}
+
+.adv-v3-kpi-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--accent);
+}
+
+.adv-v3-kpi-card .kpi-icon {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  font-size: 2rem;
+  opacity: 0.15;
+}
+
+.adv-v3-kpi-card .kpi-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.adv-v3-kpi-card .kpi-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.adv-v3-kpi-card .kpi-subtext {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* KPI Themes */
+.adv-v3-kpi-card.red { border-left: 4px solid var(--danger); }
+.adv-v3-kpi-card.red .kpi-value { color: var(--danger); }
+.adv-v3-kpi-card.blue { border-left: 4px solid var(--info); }
+.adv-v3-kpi-card.green { border-left: 4px solid var(--success); }
+.adv-v3-kpi-card.orange { border-left: 4px solid var(--warning); }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.adv-v3-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 24px;
+  align-items: start;
+}
+
+.adv-v3-main {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.adv-v3-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.adv-v3-tabs {
+  display: flex;
+  padding: 12px 12px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  gap: 8px;
+}
+
+.adv-v3-tab {
+  padding: 12px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adv-v3-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.adv-v3-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.adv-v3-tab .tab-count {
+  background: var(--accent-faint);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+}
+
+/* ── Filters ─────────────────────────────────────────────────────────────── */
+.adv-v3-filters {
+  padding: 16px 20px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Ledger Table ────────────────────────────────────────────────────────── */
+.adv-v3-table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr 1fr 120px;
+  padding: 12px 20px;
+  background: var(--bg-card-hover);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.adv-v3-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr 1fr 120px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.adv-v3-row:hover {
+  background: var(--bg-card-hover);
+}
+
+/* Row Components */
+.adv-v3-emp-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.adv-v3-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-md);
+  background: var(--accent-faint);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.adv-v3-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adv-v3-progress-wrap {
+  width: 100%;
+}
+
+.adv-v3-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.adv-v3-progress-bar {
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.adv-v3-progress-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: var(--radius-full);
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Sidebar Widgets ────────────────────────────────────────────────────── */
+.adv-v3-widget {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+}
+
+.adv-v3-widget:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent-faint);
+}
+
+.adv-v3-widget-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.adv-v3-alert {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--danger-faint);
+  border: 1px solid rgba(244, 63, 94, 0.2);
+  margin-bottom: 10px;
+}
+
+.adv-v3-alert.warning {
+  background: var(--warning-faint);
+  border-color: rgba(245, 158, 11, 0.2);
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  0% { border-color: rgba(245, 158, 11, 0.2); }
+  50% { border-color: rgba(245, 158, 11, 0.6); }
+  100% { border-color: rgba(245, 158, 11, 0.2); }
+}
+
+.adv-v3-alert-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.adv-v3-alert-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* ── Action Buttons ──────────────────────────────────────────────────────── */
+.adv-v3-sticky-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-premium {
+  padding: 10px 20px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s;
+}
+
+.btn-purple { background: #8b5cf6; color: white; box-shadow: 0 4px 14px rgba(139, 92, 246, 0.4); }
+.btn-purple:hover { background: #7c3aed; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6); }
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .adv-v3-layout {
+    grid-template-columns: 1fr;
+  }
+  .adv-v3-sidebar {
+    position: static;
+  }
+}
+
+/* ── Interactive List Items ─────────────────────────────────────────────── */
+.adv-widget-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.adv-widget-item:hover {
+  background: var(--bg-card-hover);
+  transform: translateX(4px);
+}
+
+.adv-widget-item .icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-input);
+  font-size: 1.1rem;
+}
+
+.adv-widget-item .text {
+  flex: 1;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.adv-widget-item .arrow {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.pulse {
+  animation: pulse-bg 2s infinite;
+}
+
+@keyframes pulse-bg {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Badge Tweaks */
+.badge-warning.pulse {
+  background: var(--warning);
+  color: white;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+}

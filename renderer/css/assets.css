@@ -1,0 +1,459 @@
+/* =============================================================================
+   LocalPayroll — Asset Management Module Stylesheet (Premium UI)
+   ============================================================================= */
+
+.assets-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: fadeInAssets 0.4s ease;
+}
+
+@keyframes fadeInAssets {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── KPI Dashboard Cards ─────────────────────────────────────────────────── */
+.assets-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+
+.assets-kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+}
+
+.assets-kpi-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+
+.assets-kpi-card .kpi-icon {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  font-size: 1.6rem;
+  opacity: 0.15;
+}
+
+.assets-kpi-card .kpi-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.assets-kpi-card .kpi-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.assets-kpi-card .kpi-subtext {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* KPI Accent Colors */
+.assets-kpi-card.valuation { border-top: 3px solid var(--accent); }
+.assets-kpi-card.available { border-top: 3px solid var(--success); }
+.assets-kpi-card.assigned { border-top: 3px solid var(--info); }
+.assets-kpi-card.maintenance { border-top: 3px solid var(--warning); }
+.assets-kpi-card.total { border-top: 3px solid var(--text-muted); }
+
+/* ── Split Layout ────────────────────────────────────────────────────────── */
+.assets-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+.assets-main-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tab System ───────────────────────────────────────────────────────────── */
+.assets-tabs {
+  display: flex;
+  padding: 12px 16px 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  gap: 6px;
+}
+
+.assets-tab {
+  padding: 10px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.assets-tab:hover {
+  color: var(--text-primary);
+}
+
+.assets-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Search & Filter Panel ────────────────────────────────────────────────── */
+.assets-filters {
+  padding: 16px 20px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.assets-search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+}
+
+.assets-search-wrap svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.assets-search-input {
+  padding-left: 36px !important;
+}
+
+/* ── Cards Grid View ─────────────────────────────────────────────────────── */
+.assets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+
+.asset-card {
+  background: var(--bg-card-hover);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+}
+
+.asset-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-faint);
+  box-shadow: var(--shadow-md);
+}
+
+.asset-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.asset-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-card-category {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.asset-card-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-top: 2px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Status Pills ────────────────────────────────────────────────────────── */
+.asset-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 99px;
+  border: 1px solid transparent;
+}
+
+.asset-status-badge.available {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.asset-status-badge.assigned {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.asset-status-badge.maintenance {
+  background: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.2);
+}
+
+.asset-status-badge.scrapped {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.asset-status-badge.lost {
+  background: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+  border-color: rgba(168, 85, 247, 0.2);
+}
+
+/* ── Details Block ───────────────────────────────────────────────────────── */
+.asset-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.78rem;
+  background: var(--bg-card);
+  padding: 10px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+}
+
+.asset-detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.asset-detail-row span:first-child {
+  color: var(--text-muted);
+}
+
+.asset-detail-row span:last-child {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.asset-card-assignee {
+  background: var(--accent-faint);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
+.asset-card-assignee svg {
+  flex-shrink: 0;
+}
+
+.asset-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+}
+
+.asset-card-actions .btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* ── Asset History Panels ────────────────────────────────────────────────── */
+.asset-history-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+}
+
+.asset-history-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.asset-history-header {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  border-bottom: 1.5px solid var(--border);
+  padding-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.asset-history-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.asset-history-card {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-history-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.asset-history-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.asset-history-notes {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* ── Responsive adjustments ──────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .assets-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .assets-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .asset-history-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Project Folders Row ─────────────────────────────────────────────────── */
+.assets-folders-row {
+  display: flex;
+  gap: 12px;
+  padding: 14px 20px;
+  overflow-x: auto;
+  background: var(--bg-card);
+  border-bottom: 1.5px solid var(--border);
+  scrollbar-width: none; /* Firefox */
+}
+
+.assets-folders-row::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+.assets-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.assets-folder-item:hover {
+  border-color: var(--accent-faint);
+  background: var(--bg-input);
+  transform: translateY(-1px);
+}
+
+.assets-folder-item.active {
+  background: var(--accent-faint);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.assets-folder-icon {
+  font-size: 1.1rem;
+}
+
+.assets-folder-name {
+  font-size: 0.8rem;
+}
+
+.assets-folder-count {
+  font-size: 0.7rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 99px;
+  color: var(--text-muted);
+}
+
+.assets-folder-item.active .assets-folder-count {
+  background: var(--accent);
+  color: white;
+}
+

@@ -16,25 +16,42 @@ const PaymentsPage = (() => {
 
   let _calcCache    = [];
   let _activeTab    = 'processing'; // 'processing' | 'history'
+  let _viewMode     = localStorage.getItem('pay_view_mode') || 'card'; // 'card' | 'table'
 
-  // ── Init ──────────────────────────────────────────────────────────────────
   async function init() {
-    AppState.set('selectedEmployeeId', null);
+    try {
+      if (AppState.get('user')?.role === 'hr') {
+        Toast.error("Access Denied: HR cannot access payroll controls.");
+        Router.navigate('dashboard');
+        return;
+      }
+      AppState.set('selectedEmployeeId', null);
 
-    headerActs().innerHTML = `
-      <div class="tab-bar" style="margin-bottom:0;border:none">
-        <button class="tab-btn ${_activeTab === 'processing'?'active':''}" id="pay-tab-proc">Monthly Processing</button>
-        <button class="tab-btn ${_activeTab === 'history'?'active':''}" id="pay-tab-hist">Payment History</button>
-      </div>
-    `;
+      headerActs().innerHTML = `
+        <div class="tab-bar" style="margin-bottom:0;border:none">
+          <button class="tab-btn ${_activeTab === 'processing'?'active':''}" id="pay-tab-proc">Monthly Processing</button>
+          <button class="tab-btn ${_activeTab === 'history'?'active':''}" id="pay-tab-hist">Payment History</button>
+        </div>
+      `;
 
-    document.getElementById('pay-tab-proc').addEventListener('click', e => switchTab('processing', e.target));
-    document.getElementById('pay-tab-hist').addEventListener('click', e => switchTab('history', e.target));
+      document.getElementById('pay-tab-proc').addEventListener('click', e => switchTab('processing', e.target));
+      document.getElementById('pay-tab-hist').addEventListener('click', e => switchTab('history', e.target));
 
-    const res = await API.getEmployees({ status: 'active' });
-    _employees = res.employees || [];
+      const res = await API.getEmployees({ status: 'active' });
+      _employees = res.employees || [];
 
-    await load();
+      await load();
+    } catch (err) {
+      console.error('[PaymentsPage.init ERROR]', err);
+      container().innerHTML = `
+        <div class="empty-state" style="padding:40px">
+          <div class="empty-icon" style="color:var(--danger)">❌</div>
+          <h3 style="color:var(--danger)">Payroll Initialization Failed</h3>
+          <p class="text-muted">${err.message}</p>
+          <button class="btn btn-primary mt-3" onclick="PaymentsPage.init()">🔄 Retry Initialization</button>
+        </div>
+      `;
+    }
   }
 
   function switchTab(tab, btnEl) {
@@ -48,8 +65,22 @@ const PaymentsPage = (() => {
   async function load() {
     if (_activeTab === 'processing') {
       try {
+        // First, check if payroll is locked by running a silent calculateAll or audit
         const res = await API.calculateAll(_filterMonth, _filterYear);
+        
+        if (!res.success) {
+          container().innerHTML = `<div class="empty-state"><div class="empty-icon" style="color:var(--danger)">⚠️</div><h3 style="color:var(--danger)">Calculation Error</h3><p>${res.error || 'Unknown error'}</p></div>`;
+          return;
+        }
         _calcCache = res.calculations || [];
+        _calcCache.sort((a, b) => {
+          const paidA = !!a.existingPayment;
+          const paidB = !!b.existingPayment;
+          if (paidA !== paidB) {
+            return paidA ? 1 : -1;
+          }
+          return a.employeeName.localeCompare(b.employeeName);
+        });
         renderProcessing();
       } catch(err) {
         console.error('[Payments load ERROR]', err);
@@ -63,6 +94,10 @@ const PaymentsPage = (() => {
       if (_filterStatus) filter.status     = _filterStatus;
 
       const res = await API.getPayments(filter);
+      if (!res.success) {
+        container().innerHTML = `<div class="empty-state"><div class="empty-icon" style="color:var(--danger)">⚠️</div><h3 style="color:var(--danger)">Failed to load history</h3><p>${res.error || 'Unknown error'}</p></div>`;
+        return;
+      }
       _payments = res.payments || [];
       renderHistory();
     }
@@ -70,6 +105,9 @@ const PaymentsPage = (() => {
 
   // ── Tab 1: Monthly Processing ──────────────────────────────────────────────
   function renderProcessing() {
+    const totalIssuesCount = _calcCache.reduce((sum, c) => sum + (c.issues ? c.issues.length : 0), 0);
+    const employeesWithIssuesCount = _calcCache.filter(c => c.issues && c.issues.length > 0).length;
+
     container().innerHTML = `
       <div class="toolbar">
         <div class="toolbar-left" style="align-items:center;gap:12px">
@@ -77,117 +115,40 @@ const PaymentsPage = (() => {
            ${Helpers.buildMonthSelect('pay-proc-month', _filterMonth)}
            ${Helpers.buildYearSelect('pay-proc-year', _filterYear)}
         </div>
+        <div class="toolbar-right">
+          <div class="view-toggle">
+            <button class="view-toggle-btn ${_viewMode === 'card' ? 'active' : ''}" id="pay-view-card-btn" title="Grid Card View">
+              <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Grid
+            </button>
+            <button class="view-toggle-btn ${_viewMode === 'table' ? 'active' : ''}" id="pay-view-table-btn" title="Compact Table View">
+              <svg viewBox="0 0 24 24" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              Table
+            </button>
+          </div>
+        </div>
       </div>
+
+      ${totalIssuesCount > 0 ? `
+        <div class="payroll-top-alert">
+          <div class="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>Found <strong>${totalIssuesCount}</strong> issue(s) across <strong>${employeesWithIssuesCount}</strong> employee(s) for this month. Impacted employee payroll entries are locked.</span>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="Router.navigate('attendance')">Open Attendance Module</button>
+        </div>
+      ` : ''}
 
       ${_calcCache.length === 0 ? `
         <div class="empty-state"><h3>No active employees found</h3></div>
-      ` : `
-        <div class="table-wrap">
-          <table>
-              <thead><tr>
-                <th>Employee</th>
-                <th style="text-align:center">P / H / W / A</th>
-                <th style="text-align:center">OT (Hr)</th>
-                <th style="text-align:right">Base (Day)</th>
-                <th style="text-align:right">Earned Calc</th>
-                <th style="text-align:right">Prev. Balance</th>
-                <th style="text-align:right">Net Payable</th>
-                <th style="text-align:right">Paid Amount</th>
-                <th style="text-align:right">Current Balance</th>
-                <th style="text-align:center">Action</th>
-              </tr></thead>
-              <tbody>
-                ${_calcCache.map((c, idx) => {
-                  const perDay = Math.round(c.grossSalary / 30);
-                  const hourly = Math.round(perDay / 8);
-                  
-                  // Attendance formula breakdown
-                  const formula = `(${c.presentDays}×${(perDay/100).toFixed(0)}) + (${c.halfDays}×${(perDay*0.5/100).toFixed(0)}) + (${c.woDays}×${(perDay/100).toFixed(0)})`;
-                  const otFormula = c.totalOvertimeHours > 0 ? ` + (${c.totalOvertimeHours}h×${(hourly/100).toFixed(0)})` : '';
-                  
-                  const paidAmt = c.existingPayment ? c.existingPayment.net_paid : 0;
-                  // Closing balance: what's owed after salary earned minus what was paid
-                  // Uses openingBalance + salaryEarned - otherDeductions - paidAmt
-                  // This correctly handles advance-recovery cases where netPayable is 0
-                  const closingBal = c.existingPayment
-                    ? (c.openingBalance + c.salaryEarned - (c.existingPayment.other_deductions || 0) - paidAmt)
-                    : null;
-                  const isSettled = c.existingPayment && Math.abs(closingBal) < 1; // within 1 paisa = settled
-                  const isPartiallyPaid = c.existingPayment && !isSettled;
-
-                  return `
-                  <tr>
-                    <td>
-                      <div class="font-600">${Helpers.escapeHtml(c.employeeName)}</div>
-                      <div class="text-xs text-muted">${Helpers.escapeHtml(c.employeeRole || '')}</div>
-                    </td>
-                    <td style="text-align:center">
-                      <div class="flex gap-1 justify-center">
-                        <span class="badge ${c.presentDays > 0 ? 'badge-success' : 'badge-muted'}" title="Present">P:${c.presentDays}</span>
-                        <span class="badge ${c.halfDays > 0 ? 'badge-warning' : 'badge-muted'}" title="Half Day">H:${c.halfDays}</span>
-                        <span class="badge ${c.woDays > 0 ? 'badge-accent' : 'badge-muted'}" title="Weekly Off">W:${c.woDays}</span>
-                        <span class="badge ${c.absentDays > 0 ? 'badge-danger' : 'badge-muted'}" title="Absent">A:${c.absentDays}</span>
-                      </div>
-                      <div class="text-xs text-muted mt-1" style="font-size:10px">${c.attendanceDays} Days Paid</div>
-                    </td>
-                    <td style="text-align:center" class="font-600 ${c.totalOvertimeHours > 0 ? 'text-accent' : 'text-muted'}">
-                      ${c.totalOvertimeHours || 0}
-                    </td>
-                    <td style="text-align:right" class="text-muted">
-                      <div class="font-600" style="color:var(--text)">${API.fmtRupees(c.grossSalary)}</div>
-                      <div class="text-xs">₹${(hourly/100).toFixed(2)}/hr</div>
-                    </td>
-                    <td style="text-align:right">
-                      <div class="font-600 amount info-clickable" style="font-size:0.9rem" data-idx="${idx}" data-type="earned">
-                         ${API.fmtRupees(c.salaryEarned)}
-                         ${c.isMismatch ? '<span style="color:var(--danger); cursor:help" title="Attendance has changed since payment!"> ⚠️</span>' : ''}
-                      </div>
-                    </td>
-                     <td style="text-align:right">
-                         <div class="amount info-clickable ${c.openingBalance < 0 ? 'amount-warning' : (c.openingBalance > 0 ? 'amount-success' : 'text-muted')}" 
-                              style="font-size:0.9rem" data-idx="${idx}" data-type="balance">
-                           ${c.openingBalance === 0 ? '—' : (c.openingBalance < 0 ? '-' : '+' ) + API.fmtRupees(Math.abs(c.openingBalance))}
-                         </div>
-                     </td>
-                    <td style="text-align:right;background:var(--bg-subtle)">
-                       <div class="amount amount-success font-600 info-clickable" data-idx="${idx}" data-type="summary">
-                         ${API.fmtRupees(c.netPayable)}
-                       </div>
-                    </td>
-                     <td style="text-align:right" class="amount ${c.existingPayment ? 'text-accent font-600' : 'text-muted'}">
-                        ${c.existingPayment ? API.fmtRupees(paidAmt) : '—'}
-                     </td>
-                     <td style="text-align:right">
-                        <div class="amount ${isPartiallyPaid ? 'amount-danger font-600' : (isSettled ? 'text-success' : 'text-muted')}" style="font-size:0.95rem">
-                           ${c.existingPayment 
-                              ? (isSettled 
-                                  ? 'Settled' 
-                                  : (closingBal < 0 
-                                      ? `<span class="text-danger">${API.fmtRupees(Math.abs(closingBal))} Adv</span>`
-                                      : `<span class="text-warning">+${API.fmtRupees(closingBal)} Pend</span>`))
-                              : '—'}
-                        </div>
-                     </td>
-                    <td style="text-align:center">
-                      ${c.existingPayment 
-                          ? `<div class="flex flex-col gap-1 items-center">
-                              <span class="badge badge-success" style="padding: 2px 8px; font-size:10px">Paid</span>
-                              <button class="btn btn-sm btn-ghost pay-slip-btn-proc" data-id="${c.existingPayment.id}" style="padding:2px" title="View Slip">📄</button>
-                             </div>`
-                          : `<button class="btn btn-sm btn-primary pay-now-btn" data-id="${c.employeeId}" style="width:100%">Pay</button>`
-                      }
-                    </td>
-                  </tr>
-                  `;
-                }).join('')}
-              </tbody>
-          </table>
-        </div>
-      `}
+      ` : (_viewMode === 'card' ? renderProcessingCards() : renderProcessingTable())}
     `;
 
     document.getElementById('pay-proc-month')?.addEventListener('change', e => { _filterMonth = parseInt(e.target.value); load(); });
     document.getElementById('pay-proc-year')?.addEventListener('change', e => { _filterYear = parseInt(e.target.value); load(); });
+
+    // View toggle listeners
+    attachViewToggleListeners();
 
     container().querySelectorAll('.pay-now-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -205,6 +166,7 @@ const PaymentsPage = (() => {
         else if (r.error !== 'Cancelled.') Toast.error(r.error);
       });
     });
+
     // Info Clickables
     container().querySelectorAll('.info-clickable').forEach(el => {
       el.addEventListener('click', (e) => {
@@ -215,6 +177,373 @@ const PaymentsPage = (() => {
     });
   }
 
+  function attachViewToggleListeners() {
+    const cardBtn = document.getElementById('pay-view-card-btn');
+    const tableBtn = document.getElementById('pay-view-table-btn');
+    if (cardBtn && tableBtn) {
+      cardBtn.addEventListener('click', () => {
+        _viewMode = 'card';
+        localStorage.setItem('pay_view_mode', 'card');
+        load();
+      });
+      tableBtn.addEventListener('click', () => {
+        _viewMode = 'table';
+        localStorage.setItem('pay_view_mode', 'table');
+        load();
+      });
+    }
+  }
+
+  function renderProcessingTable() {
+    return `
+      <div class="table-wrap">
+        <table class="payments-table">
+            <thead><tr>
+              <th>Employee</th>
+              <th style="text-align:center">Attendance & OT</th>
+              <th style="text-align:right">Salary Details</th>
+              <th style="text-align:right">Payable Summary</th>
+              <th style="text-align:center">Action</th>
+            </tr></thead>
+            <tbody>
+              ${_calcCache.map((c, idx) => {
+                const perDay = c.grossSalary / c.totalDays;
+                const hourly = Math.round(perDay / 8);
+                const paidAmt = c.existingPayment ? c.existingPayment.net_paid : 0;
+                
+                let issuesHtml = '';
+                let hasBlockingIssue = false;
+                if (c.issues && c.issues.length > 0) {
+                  issuesHtml = `<div class="flex flex-col gap-1 mt-1">` + c.issues.map(iss => {
+                    const isBlocking = iss.type === 'unfinalized' || iss.type === 'missing_project' || iss.type === 'missing_attendance' || iss.type === 'mismatch';
+                    if (isBlocking) hasBlockingIssue = true;
+                    const icon = isBlocking ? '❌' : '⚠️';
+                    const badgeClass = isBlocking ? 'error' : 'warning';
+                    
+                    let clickAttr = '';
+                    let titleAttr = '';
+                    let label = iss.message;
+
+                    if (iss.type === 'missing_attendance' || iss.type === 'mismatch') {
+                      clickAttr = `onclick="Router.navigate('attendance', { employeeId: ${c.employeeId}, mode: 'monthly' })"`;
+                      titleAttr = `title="Click to go to monthly attendance view"`;
+                    } else if (iss.dates && iss.dates.length > 0) {
+                      const formattedDates = iss.dates.map(d => {
+                        const parts = d.split('-');
+                        if (parts.length !== 3) return d;
+                        const day = parseInt(parts[2]);
+                        const monthIdx = parseInt(parts[1]) - 1;
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return `${day}-${months[monthIdx]}`;
+                      });
+
+                      if (iss.dates.length === 1) {
+                        clickAttr = `onclick="Router.navigate('attendance', { date: '${iss.dates[0]}', mode: 'bulk' })"`;
+                        titleAttr = `title="Click to jump to attendance sheet for ${iss.dates[0]}"`;
+                        
+                        if (iss.type === 'unfinalized') {
+                          label = `Unfinalized on ${formattedDates[0]}`;
+                        } else if (iss.type === 'missing_project') {
+                          label = `Missing project on ${formattedDates[0]}`;
+                        } else if (iss.type === 'pending_ot') {
+                          label = `OT pending on ${formattedDates[0]}`;
+                        }
+                      } else if (iss.dates.length <= 3) {
+                        const datesJson = JSON.stringify(iss.dates).replace(/"/g, '&quot;');
+                        clickAttr = `onclick="PaymentsPage.showProblemDates('${Helpers.escapeHtml(c.employeeName)}', '${Helpers.escapeHtml(iss.type)}', ${datesJson})"`;
+                        titleAttr = `title="Click to select from problem dates"`;
+                        
+                        const dateListStr = formattedDates.join(', ');
+                        if (iss.type === 'unfinalized') {
+                          label = `Unfinalized: ${dateListStr}`;
+                        } else if (iss.type === 'missing_project') {
+                          label = `Missing project: ${dateListStr}`;
+                        } else if (iss.type === 'pending_ot') {
+                          label = `OT pending: ${dateListStr}`;
+                        }
+                      } else {
+                        const datesJson = JSON.stringify(iss.dates).replace(/"/g, '&quot;');
+                        clickAttr = `onclick="PaymentsPage.showProblemDates('${Helpers.escapeHtml(c.employeeName)}', '${Helpers.escapeHtml(iss.type)}', ${datesJson})"`;
+                        titleAttr = `title="Click to select from ${iss.dates.length} problem dates"`;
+                      }
+                    }
+                    
+                    const clickableClass = clickAttr ? 'clickable' : '';
+                    return `<span class="payroll-issue-tag ${badgeClass} ${clickableClass}" ${clickAttr} ${titleAttr}>${icon} ${Helpers.escapeHtml(label)}</span>`;
+                  }).join('') + `</div>`;
+                }
+
+                let actionHtml = '';
+                if (c.existingPayment) {
+                  actionHtml = `<div class="flex flex-col gap-1 items-center">
+                                  <span class="badge badge-success" style="padding: 2px 8px; font-size:10px">Paid</span>
+                                  <button class="btn btn-sm btn-ghost pay-slip-btn-proc" data-id="${c.existingPayment.id}" style="padding:2px" title="View Slip">📄</button>
+                                </div>`;
+                } else if (hasBlockingIssue) {
+                  actionHtml = `<span class="payments-table-locked" title="Resolve attendance issues to unlock">🔒 Locked</span>`;
+                } else {
+                  actionHtml = `<button class="btn btn-sm btn-primary pay-now-btn" data-id="${c.employeeId}" style="width:100%">Pay</button>`;
+                }
+
+                let balText = '';
+                if (c.openingBalance !== 0) {
+                  const sign = c.openingBalance < 0 ? '-' : '+';
+                  const cls = c.openingBalance < 0 ? 'amount-warning' : 'amount-success';
+                  balText = `Bal: <span class="${cls}">${sign}${API.fmtRupees(Math.abs(c.openingBalance))}</span>`;
+                }
+
+                let paymentStatusText = '';
+                if (c.existingPayment) {
+                  const closingBal = c.openingBalance + c.salaryEarned - (c.existingPayment.other_deductions || 0) - paidAmt;
+                  const isSettled = Math.abs(closingBal) < 1;
+                  
+                  if (isSettled) {
+                    paymentStatusText = `<span class="text-success">Paid: ${API.fmtRupees(paidAmt)} (Settled)</span>`;
+                  } else if (closingBal < 0) {
+                    paymentStatusText = `<span class="text-danger">Paid: ${API.fmtRupees(paidAmt)} (Adv: ${API.fmtRupees(Math.abs(closingBal))})</span>`;
+                  } else {
+                    paymentStatusText = `<span class="text-warning">Paid: ${API.fmtRupees(paidAmt)} (Pend: +${API.fmtRupees(closingBal)})</span>`;
+                  }
+                }
+
+                const detailsSubText = paymentStatusText || balText || '<span class="text-muted">—</span>';
+
+                return `
+                <tr>
+                  <td>
+                    <div class="payments-stacked-cell">
+                      <span class="primary">${Helpers.escapeHtml(c.employeeName)}</span>
+                      <span class="secondary">${Helpers.escapeHtml(c.employeeRole || '')}</span>
+                      ${issuesHtml}
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    <div class="payments-table-att-summary">
+                      <div class="badge-row">
+                        <span class="badge ${c.presentDays > 0 ? 'badge-success' : 'badge-muted'}" title="Present">P:${c.presentDays}</span>
+                        <span class="badge ${c.halfDays > 0 ? 'badge-warning' : 'badge-muted'}" title="Half Day">H:${c.halfDays}</span>
+                        <span class="badge ${c.woDays > 0 ? 'badge-accent' : 'badge-muted'}" title="Weekly Off">W:${c.woDays}</span>
+                        <span class="badge ${c.absentDays > 0 ? 'badge-danger' : 'badge-muted'}" title="Absent">A:${c.absentDays}</span>
+                      </div>
+                      <div style="font-size: 10px; font-weight: 500; color: var(--text-muted);">
+                        ${c.attendanceDays} / ${c.totalDays} Days Paid
+                        ${c.totalOvertimeHours > 0 ? ` · <span class="text-accent" style="font-weight: 600;">${c.totalOvertimeHours}h OT</span>` : ''}
+                      </div>
+                    </div>
+                  </td>
+                  <td style="text-align:right">
+                    <div class="payments-stacked-cell" style="text-align:right; align-items:flex-end">
+                      <span class="primary info-clickable" data-idx="${idx}" data-type="earned" style="font-size:0.9rem">
+                        ${API.fmtRupees(c.salaryEarned)}
+                        ${c.isMismatch ? '<span style="color:var(--danger); cursor:help" title="Attendance has changed since payment!"> ⚠️</span>' : ''}
+                      </span>
+                      <span class="secondary">Base: ${API.fmtRupees(c.grossSalary)}</span>
+                    </div>
+                  </td>
+                  <td style="text-align:right; background:var(--bg-subtle)">
+                    <div class="payments-stacked-cell" style="text-align:right; align-items:flex-end">
+                      <span class="primary amount amount-success info-clickable" data-idx="${idx}" data-type="summary" style="font-size:0.95rem">
+                        ${API.fmtRupees(c.netPayable)}
+                      </span>
+                      <span class="secondary">${detailsSubText}</span>
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    ${actionHtml}
+                  </td>
+                </tr>
+                `;
+              }).join('')}
+            </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderProcessingCards() {
+    const colors = [
+      ['#6366f1', '#818cf8'], // indigo
+      ['#10b981', '#34d399'], // emerald
+      ['#f59e0b', '#fbbf24'], // amber
+      ['#ec4899', '#f472b6'], // pink
+      ['#3b82f6', '#60a5fa'], // blue
+      ['#8b5cf6', '#a78bfa']  // violet
+    ];
+
+    return `
+      <div class="payroll-grid">
+        ${_calcCache.map((c, idx) => {
+          const perDay = c.grossSalary / c.totalDays;
+          const hourly = Math.round(perDay / 8);
+          const paidAmt = c.existingPayment ? c.existingPayment.net_paid : 0;
+          const closingBal = c.existingPayment
+            ? (c.openingBalance + c.salaryEarned - (c.existingPayment.other_deductions || 0) - paidAmt)
+            : null;
+          const isSettled = c.existingPayment && Math.abs(closingBal) < 1;
+
+          let issuesHtml = '';
+          let hasBlockingIssue = false;
+          if (c.issues && c.issues.length > 0) {
+            issuesHtml = `<div class="payroll-card-issues">` + c.issues.map(iss => {
+              const isBlocking = iss.type === 'unfinalized' || iss.type === 'missing_project' || iss.type === 'missing_attendance' || iss.type === 'mismatch';
+              if (isBlocking) hasBlockingIssue = true;
+              const icon = isBlocking ? '❌' : '⚠️';
+              const badgeClass = isBlocking ? 'error' : 'warning';
+              
+              let clickAttr = '';
+              let titleAttr = '';
+              let label = iss.message;
+
+              if (iss.type === 'missing_attendance' || iss.type === 'mismatch') {
+                clickAttr = `onclick="Router.navigate('attendance', { employeeId: ${c.employeeId}, mode: 'monthly' })"`;
+                titleAttr = `title="Click to go to monthly attendance view"`;
+              } else if (iss.dates && iss.dates.length > 0) {
+                const formattedDates = iss.dates.map(d => {
+                  const parts = d.split('-');
+                  if (parts.length !== 3) return d;
+                  const day = parseInt(parts[2]);
+                  const monthIdx = parseInt(parts[1]) - 1;
+                  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                  return `${day}-${months[monthIdx]}`;
+                });
+
+                if (iss.dates.length === 1) {
+                  clickAttr = `onclick="Router.navigate('attendance', { date: '${iss.dates[0]}', mode: 'bulk' })"`;
+                  titleAttr = `title="Click to jump to attendance sheet for ${iss.dates[0]}"`;
+                  
+                  if (iss.type === 'unfinalized') {
+                    label = `Unfinalized on ${formattedDates[0]}`;
+                  } else if (iss.type === 'missing_project') {
+                    label = `Missing project on ${formattedDates[0]}`;
+                  } else if (iss.type === 'pending_ot') {
+                    label = `OT pending on ${formattedDates[0]}`;
+                  }
+                } else if (iss.dates.length <= 3) {
+                  const datesJson = JSON.stringify(iss.dates).replace(/"/g, '&quot;');
+                  clickAttr = `onclick="PaymentsPage.showProblemDates('${Helpers.escapeHtml(c.employeeName)}', '${Helpers.escapeHtml(iss.type)}', ${datesJson})"`;
+                  titleAttr = `title="Click to select from problem dates"`;
+                  
+                  const dateListStr = formattedDates.join(', ');
+                  if (iss.type === 'unfinalized') {
+                    label = `Unfinalized: ${dateListStr}`;
+                  } else if (iss.type === 'missing_project') {
+                    label = `Missing project: ${dateListStr}`;
+                  } else if (iss.type === 'pending_ot') {
+                    label = `OT pending: ${dateListStr}`;
+                  }
+                } else {
+                  const datesJson = JSON.stringify(iss.dates).replace(/"/g, '&quot;');
+                  clickAttr = `onclick="PaymentsPage.showProblemDates('${Helpers.escapeHtml(c.employeeName)}', '${Helpers.escapeHtml(iss.type)}', ${datesJson})"`;
+                  titleAttr = `title="Click to select from ${iss.dates.length} problem dates"`;
+                }
+              }
+              
+              const clickableClass = clickAttr ? 'clickable' : '';
+              return `<span class="payroll-issue-tag ${badgeClass} ${clickableClass}" ${clickAttr} ${titleAttr}>${icon} ${Helpers.escapeHtml(label)}</span>`;
+            }).join('') + `</div>`;
+          }
+
+          const avatarChar = c.employeeName ? c.employeeName.charAt(0).toUpperCase() : 'E';
+          const colorIdx = (c.employeeName ? c.employeeName.charCodeAt(0) : 0) % colors.length;
+          const avatarStyle = `background: linear-gradient(135deg, ${colors[colorIdx][0]}, ${colors[colorIdx][1]})`;
+
+          return `
+          <div class="payroll-card">
+            <div class="payroll-card-header">
+              <div class="payroll-card-avatar" style="${avatarStyle}">${avatarChar}</div>
+              <div class="payroll-card-info">
+                <div class="payroll-card-name" title="${Helpers.escapeHtml(c.employeeName)}">${Helpers.escapeHtml(c.employeeName)}</div>
+                <div class="payroll-card-role" title="${Helpers.escapeHtml(c.employeeRole || '')}">${Helpers.escapeHtml(c.employeeRole || 'Staff')}</div>
+              </div>
+            </div>
+
+            ${issuesHtml}
+
+            <div class="payroll-card-attendance">
+              <div class="payroll-card-attendance-header">
+                <span>Attendance Summary</span>
+                <span class="text-xs text-muted" style="font-size: 10px;">${c.attendanceDays} / ${c.totalDays} Days Paid</span>
+              </div>
+              <div class="payroll-card-progress-bg">
+                <div class="payroll-card-progress-fill" style="width: ${(c.attendanceDays / c.totalDays * 100).toFixed(0)}%"></div>
+              </div>
+              <div class="payroll-card-attendance-pills">
+                <span class="badge ${c.presentDays > 0 ? 'badge-success' : 'badge-muted'}" title="Present">P:${c.presentDays}</span>
+                <span class="badge ${c.halfDays > 0 ? 'badge-warning' : 'badge-muted'}" title="Half Day">H:${c.halfDays}</span>
+                <span class="badge ${c.woDays > 0 ? 'badge-accent' : 'badge-muted'}" title="Weekly Off">W:${c.woDays}</span>
+                <span class="badge ${c.absentDays > 0 ? 'badge-danger' : 'badge-muted'}" title="Absent">A:${c.absentDays}</span>
+              </div>
+            </div>
+
+            <div class="payroll-card-finances">
+              <div class="payroll-card-finance-row">
+                <span>Monthly Base</span>
+                <span class="val">${API.fmtRupees(c.grossSalary)}</span>
+              </div>
+              <div class="payroll-card-finance-row">
+                <span>Salary Earned</span>
+                <span class="val info-clickable" data-idx="${idx}" data-type="earned">
+                  ${API.fmtRupees(c.salaryEarned)}
+                  ${c.isMismatch ? ' ⚠️' : ''}
+                </span>
+              </div>
+
+              ${c.openingBalance !== 0 ? `
+                <div class="payroll-card-finance-row">
+                  <span>Opening Balance</span>
+                  <span class="val info-clickable ${c.openingBalance < 0 ? 'amount-warning' : 'amount-success'}" data-idx="${idx}" data-type="balance">
+                    ${c.openingBalance < 0 ? '-' : '+'}${API.fmtRupees(Math.abs(c.openingBalance))}
+                  </span>
+                </div>
+              ` : ''}
+
+              ${c.totalOvertimeHours > 0 ? `
+                <div class="payroll-card-finance-row">
+                  <span>Overtime (${c.totalOvertimeHours}h)</span>
+                  <span class="val text-accent font-600">${API.fmtRupees(c.overtimePay)}</span>
+                </div>
+              ` : ''}
+
+              ${c.existingPayment ? `
+                <div class="payroll-card-finance-row">
+                  <span>Amount Paid</span>
+                  <span class="val text-accent font-600">${API.fmtRupees(paidAmt)}</span>
+                </div>
+                <div class="payroll-card-finance-row">
+                  <span>Closing Balance</span>
+                  <span class="val ${isSettled ? 'text-success' : (closingBal < 0 ? 'text-danger' : 'text-warning')}">
+                    ${isSettled ? 'Settled' : (closingBal < 0 ? `${API.fmtRupees(Math.abs(closingBal))} Adv` : `+${API.fmtRupees(closingBal)} Pend`)}
+                  </span>
+                </div>
+              ` : ''}
+
+              <div class="payroll-card-finance-row net">
+                <span>Net Payable</span>
+                <span class="val info-clickable" data-idx="${idx}" data-type="summary">${API.fmtRupees(c.netPayable)}</span>
+              </div>
+            </div>
+
+            <div class="payroll-card-footer">
+              <div class="payroll-card-footer-status">
+                ${c.existingPayment ? `<span class="badge badge-success">Paid</span>` : (hasBlockingIssue ? `<span class="payments-table-locked">🔒 Locked</span>` : `<span class="text-muted">Unpaid</span>`)}
+              </div>
+              <div>
+                ${c.existingPayment ? `
+                  <button class="btn btn-sm btn-secondary pay-slip-btn-proc" data-id="${c.existingPayment.id}">View Slip 📄</button>
+                ` : (hasBlockingIssue ? `
+                  <button class="btn btn-sm btn-secondary" disabled title="Resolve issues to unlock">Locked</button>
+                ` : `
+                  <button class="btn btn-sm btn-primary pay-now-btn" data-id="${c.employeeId}">Pay</button>
+                `)}
+              </div>
+            </div>
+          </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
   function showQuickPreview(idx, type) {
     const c = _calcCache[idx];
     if (!c) return;
@@ -222,20 +551,21 @@ const PaymentsPage = (() => {
     let content = '';
     let title = '';
 
-    const perDay = Math.round(c.grossSalary / 30);
+    const perDay = c.grossSalary / c.totalDays;
     const hourly = Math.round(perDay / 8);
 
     if (type === 'earned') {
       title = 'Earnings Breakdown';
       content = `
         <div class="calc-row"><span>Monthly Base</span> <span>${API.fmtRupees(c.grossSalary)}</span></div>
-        <div class="calc-row text-xs text-muted mb-2"><span>Daily Rate (Base/30)</span> <span>${API.fmtRupees(perDay)}</span></div>
+        <div class="calc-row text-xs text-muted mb-2"><span>Daily Rate (Base/${c.totalDays})</span> <span>${API.fmtRupees(perDay)}</span></div>
         <div style="border-top:1px solid var(--border); padding-top:8px">
           <div class="calc-row"><span>Present (${c.presentDays}d × ${API.fmtRupees(perDay)})</span> <span>${API.fmtRupees(c.presentDays * perDay)}</span></div>
           <div class="calc-row"><span>Half Day (${c.halfDays}d × 0.5 × ${API.fmtRupees(perDay)})</span> <span>${API.fmtRupees(c.halfDays * 0.5 * perDay)}</span></div>
           <div class="calc-row"><span>Weekly Off (${c.woDays}d × ${API.fmtRupees(perDay)})</span> <span>${API.fmtRupees(c.woDays * perDay)}</span></div>
           ${c.totalOvertimeHours > 0 ? `<div class="calc-row"><span>Overtime (${c.totalOvertimeHours}h × ${API.fmtRupees(hourly)})</span> <span>${API.fmtRupees(c.overtimePay)}</span></div>` : ''}
           ${c.reimbursedExpenses > 0 ? `<div class="calc-row text-success"><span>Expenses Reimbursed</span> <span>+${API.fmtRupees(c.reimbursedExpenses)}</span></div>` : ''}
+          ${c.bonusAmount > 0 ? `<div class="calc-row text-success"><span>Bonus</span> <span>+${API.fmtRupees(c.bonusAmount)}</span></div>` : ''}
         </div>
         <div class="calc-row mt-2 font-600" style="border-top:1px solid var(--border); padding-top:8px">
           <span>Total Earned</span> <span class="amount amount-success">${API.fmtRupees(c.totalEarnings)}</span>
@@ -306,11 +636,21 @@ const PaymentsPage = (() => {
           </select>
           <button id="pay-clear-filter" class="btn btn-ghost btn-sm">Clear</button>
         </div>
-        <div class="toolbar-right flex gap-2">
-          <div class="card" style="padding:10px 18px">
+        <div class="toolbar-right flex items-center gap-2" style="flex-wrap:wrap">
+          <div class="view-toggle" style="margin-right:10px">
+            <button class="view-toggle-btn ${_viewMode === 'card' ? 'active' : ''}" id="pay-view-card-btn" title="Grid Card View">
+              <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              Grid
+            </button>
+            <button class="view-toggle-btn ${_viewMode === 'table' ? 'active' : ''}" id="pay-view-table-btn" title="Compact Table View">
+              <svg viewBox="0 0 24 24" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              Table
+            </button>
+          </div>
+          <div class="card" style="padding:8px 14px; border-radius: var(--radius-md)">
              <span class="text-sm">${paidCount} records</span>
           </div>
-          <div class="card" style="padding:10px 18px">
+          <div class="card" style="padding:8px 14px; border-radius: var(--radius-md)">
             <span class="text-sm font-600">Total: <span class="amount amount-success">${API.fmtRupees(totalNet)}</span></span>
           </div>
         </div>
@@ -318,56 +658,16 @@ const PaymentsPage = (() => {
 
       ${_payments.length === 0 ? `
         <div class="empty-state"><h3>No payment records</h3></div>
-      ` : `
-        <div class="table-wrap">
-          <table>
-            <thead><tr>
-              <th>Employee</th>
-              <th>Month / Year</th>
-              <th>Gross Salary</th>
-              <th>Advance Ded.</th>
-              <th>Final Paid</th>
-              <th>Mode</th>
-              <th>Actions</th>
-            </tr></thead>
-            <tbody>
-              ${_payments.map(p => `
-                <tr>
-                  <td>
-                    <div class="font-600">${Helpers.escapeHtml(p.employee_name)}</div>
-                    <div class="text-xs text-muted">${Helpers.escapeHtml(p.employee_role || '')}</div>
-                  </td>
-                  <td class="td-muted">${Helpers.shortMonth(p.month)} ${p.year}</td>
-                  <td class="amount text-muted"><small>${API.fmtRupees(p.gross_salary)}</small></td>
-                  <td style="text-align:right" class="amount ${p.advance_deducted > 0 ? 'amount-warning' : (p.advance_deducted < 0 ? 'amount-success' : 'text-muted')}">
-                    ${p.advance_deducted === 0 ? '—' : (p.advance_deducted > 0 ? '-' : '+') + API.fmtRupees(Math.abs(p.advance_deducted))}
-                  </td>
-                  <td class="amount amount-success font-600">${API.fmtRupees(p.net_paid)}</td>
-                  <td>${modeBadge(p.mode)}</td>
-                  <td>
-                    <div class="flex gap-2">
-                      <button class="btn btn-sm btn-secondary pay-slip-btn" data-id="${p.id}" title="Payslip PDF">📄</button>
-                      <button class="btn btn-sm btn-secondary pay-whatsapp-btn"
-                        data-phone="${Helpers.escapeHtml(p.employee_phone || '')}"
-                        data-name="${Helpers.escapeHtml(p.employee_name)}"
-                        data-net="${API.fmtRupees(p.net_paid)}"
-                        data-month="${Helpers.monthName(p.month)}"
-                        data-year="${p.year}">💬</button>
-                      <button class="btn btn-sm btn-danger pay-del-btn" data-id="${p.id}" title="Delete">✕</button>
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
+      ` : (_viewMode === 'card' ? renderHistoryCards() : renderHistoryTable())}
     `;
 
     document.getElementById('pay-hist-emp')?.addEventListener('change',    e => { _filterEmp = e.target.value; load(); });
     document.getElementById('pay-hist-month')?.addEventListener('change',  e => { _filterMonth = parseInt(e.target.value); load(); });
     document.getElementById('pay-hist-year')?.addEventListener('change',   e => { _filterYear  = parseInt(e.target.value); load(); });
     document.getElementById('pay-clear-filter')?.addEventListener('click', () => { _filterEmp = ''; _filterMonth = AppState.get('currentMonth'); _filterYear = AppState.get('currentYear'); load(); });
+
+    // View toggle listeners
+    attachViewToggleListeners();
 
     container().querySelectorAll('.pay-slip-btn').forEach(btn =>
       btn.addEventListener('click', async () => {
@@ -397,6 +697,267 @@ const PaymentsPage = (() => {
     );
   }
 
+  function renderHistoryTable() {
+    return `
+      <div class="table-wrap">
+        <table class="payments-table">
+          <thead><tr>
+            <th>Employee</th>
+            <th>Month / Year & Mode</th>
+            <th style="text-align:right">Salary & Advance</th>
+            <th style="text-align:right">Final Paid</th>
+            <th style="text-align:center">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${_payments.map(p => `
+              <tr>
+                <td>
+                  <div class="payments-stacked-cell">
+                    <span class="primary">${Helpers.escapeHtml(p.employee_name)}</span>
+                    <span class="secondary">${Helpers.escapeHtml(p.employee_role || 'Staff')}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="payments-stacked-cell">
+                    <span class="primary">${Helpers.shortMonth(p.month)} ${p.year}</span>
+                    <span class="secondary">${modeBadge(p.mode)}</span>
+                  </div>
+                </td>
+                <td style="text-align:right">
+                  <div class="payments-stacked-cell" style="text-align:right; align-items:flex-end">
+                    <span class="primary"><small>Base: ${API.fmtRupees(p.gross_salary)}</small></span>
+                    <span class="secondary ${p.advance_deducted > 0 ? 'amount-warning' : (p.advance_deducted < 0 ? 'amount-success' : 'text-muted')}">
+                      Adv Recovery: ${p.advance_deducted === 0 ? '—' : (p.advance_deducted > 0 ? '-' : '+') + API.fmtRupees(Math.abs(p.advance_deducted))}
+                    </span>
+                  </div>
+                </td>
+                <td style="text-align:right" class="amount amount-success font-600">${API.fmtRupees(p.net_paid)}</td>
+                <td style="text-align:center">
+                  <div class="flex gap-2 justify-center">
+                    <button class="btn btn-sm btn-secondary pay-slip-btn" data-id="${p.id}" title="Payslip PDF">📄</button>
+                    <button class="btn btn-sm btn-secondary pay-whatsapp-btn"
+                      data-phone="${Helpers.escapeHtml(p.employee_phone || '')}"
+                      data-name="${Helpers.escapeHtml(p.employee_name)}"
+                      data-net="${API.fmtRupees(p.net_paid)}"
+                      data-month="${Helpers.monthName(p.month)}"
+                      data-year="${p.year}" title="Share via WhatsApp">💬</button>
+                    <button class="btn btn-sm btn-danger pay-del-btn" data-id="${p.id}" title="Delete">✕</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderHistoryCards() {
+    const colors = [
+      ['#6366f1', '#818cf8'], // indigo
+      ['#10b981', '#34d399'], // emerald
+      ['#f59e0b', '#fbbf24'], // amber
+      ['#ec4899', '#f472b6'], // pink
+      ['#3b82f6', '#60a5fa'], // blue
+      ['#8b5cf6', '#a78bfa']  // violet
+    ];
+
+    return `
+      <div class="payroll-grid">
+        ${_payments.map(p => {
+          const avatarChar = p.employee_name ? p.employee_name.charAt(0).toUpperCase() : 'E';
+          const colorIdx = (p.employee_name ? p.employee_name.charCodeAt(0) : 0) % colors.length;
+          const avatarStyle = `background: linear-gradient(135deg, ${colors[colorIdx][0]}, ${colors[colorIdx][1]})`;
+
+          return `
+          <div class="payroll-card">
+            <div class="payroll-card-header">
+              <div class="payroll-card-avatar" style="${avatarStyle}">${avatarChar}</div>
+              <div class="payroll-card-info">
+                <div class="payroll-card-name" title="${Helpers.escapeHtml(p.employee_name)}">${Helpers.escapeHtml(p.employee_name)}</div>
+                <div class="payroll-card-role" title="${Helpers.escapeHtml(p.employee_role || '')}">${Helpers.escapeHtml(p.employee_role || 'Staff')}</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span class="badge badge-muted" style="text-transform: none; font-size:0.75rem">${Helpers.shortMonth(p.month)} ${p.year}</span>
+              ${modeBadge(p.mode)}
+            </div>
+
+            <div class="payroll-card-finances" style="border-top: none; padding-top: 0; margin-bottom: 14px;">
+              <div class="payroll-card-finance-row">
+                <span>Gross Salary</span>
+                <span class="val">${API.fmtRupees(p.gross_salary)}</span>
+              </div>
+              <div class="payroll-card-finance-row">
+                <span>Advance Deducted</span>
+                <span class="val ${p.advance_deducted > 0 ? 'amount-warning' : 'text-muted'}">
+                  ${p.advance_deducted === 0 ? '—' : '-' + API.fmtRupees(p.advance_deducted)}
+                </span>
+              </div>
+              ${p.notes ? `
+                <div style="font-size:0.75rem; color:var(--text-muted); background:var(--bg-row-alt); padding:6px 10px; border-radius:6px; border:1px solid var(--border); margin-top:8px; font-style: italic;">
+                  Note: ${Helpers.escapeHtml(p.notes)}
+                </div>
+              ` : ''}
+              <div class="payroll-card-finance-row net" style="border-top:1px dashed var(--border); padding-top:10px; margin-top:8px;">
+                <span>Total Paid</span>
+                <span class="val" style="color:var(--success)">${API.fmtRupees(p.net_paid)}</span>
+              </div>
+            </div>
+
+            <div class="payroll-card-footer" style="padding-top:12px;">
+              <span class="badge badge-success">Completed</span>
+              <div class="flex gap-2">
+                <button class="btn btn-sm btn-secondary pay-slip-btn" data-id="${p.id}" title="Payslip PDF">📄</button>
+                <button class="btn btn-sm btn-secondary pay-whatsapp-btn"
+                  data-phone="${Helpers.escapeHtml(p.employee_phone || '')}"
+                  data-name="${Helpers.escapeHtml(p.employee_name)}"
+                  data-net="${API.fmtRupees(p.net_paid)}"
+                  data-month="${Helpers.monthName(p.month)}"
+                  data-year="${p.year}" title="Share via WhatsApp">💬</button>
+                <button class="btn btn-sm btn-danger pay-del-btn" data-id="${p.id}" title="Delete">✕</button>
+              </div>
+            </div>
+          </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // ── NEW: Validation Panel ──────────────────────────────────────────────────
+  function renderValidationPanel(issues, stats) {
+    container().innerHTML = `
+      <div class="payroll-audit-container" style="padding:24px; max-width:1200px; margin:0 auto">
+        
+        <div class="audit-header card" style="background:var(--danger); color:white; border:none; margin-bottom:24px">
+          <div class="flex items-center gap-4">
+             <div style="font-size:32px">🛡️</div>
+             <div>
+               <h2 class="font-700" style="margin:0">Payroll Processing Blocked</h2>
+               <p style="margin:5px 0 0; opacity:0.9">Operational validation found ${issues.length} blocking issues for ${Helpers.monthName(_filterMonth)} ${_filterYear}.</p>
+             </div>
+          </div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+          <div class="card p-4 text-center">
+             <div class="text-2xl font-700 text-danger">${stats.unlocked || 0}</div>
+             <div class="text-xs text-muted font-600 uppercase">Unlocked Records</div>
+          </div>
+          <div class="card p-4 text-center">
+             <div class="text-2xl font-700 text-warning">${stats.pendingOT || 0}</div>
+             <div class="text-xs text-muted font-600 uppercase">Pending OT</div>
+          </div>
+          <div class="card p-4 text-center">
+             <div class="text-2xl font-700 text-danger">${stats.missingProject || 0}</div>
+             <div class="text-xs text-muted font-600 uppercase">Missing Projects</div>
+          </div>
+          <div class="card p-4 text-center">
+             <div class="text-2xl font-700 text-accent">${stats.missingAttendance || 0}</div>
+             <div class="text-xs text-muted font-600 uppercase">Gaps Found</div>
+          </div>
+        </div>
+
+        <!-- Issues Table -->
+        <div class="card p-0 overflow-hidden">
+          <div class="p-4 bg-subtle flex justify-between items-center border-bottom">
+            <h3 class="font-600">🚨 Attendance Issues Needing Resolution</h3>
+            <div class="flex gap-2">
+              <button class="btn btn-sm btn-accent" id="audit-lock-all">Lock All Finalized</button>
+              <button class="btn btn-sm btn-ghost" onclick="PaymentsPage.load()">🔄 Refresh Audit</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Date</th>
+                  <th>Project/Site</th>
+                  <th>Issue Type</th>
+                  <th>Detail</th>
+                  <th style="text-align:right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${issues.length === 0 ? '<tr><td colspan="6" class="text-center p-8">No issues found. Refresh to re-audit.</td></tr>' : issues.map(item => `
+                  <tr style="border-left: 4px solid ${item.severity === 'error' ? 'var(--danger)' : 'var(--warning)'}">
+                    <td>
+                      <div class="font-600">${Helpers.escapeHtml(item.employee)}</div>
+                      <div class="text-xs text-muted">ID: EMP${String(item.employeeId).padStart(3,'0')}</div>
+                    </td>
+                    <td><div class="badge badge-muted">${item.date === 'Entire Month' ? 'Month View' : Helpers.formatDate(item.date)}</div></td>
+                    <td>${Helpers.escapeHtml(item.project)}</td>
+                    <td><span class="tag-mini ${item.severity === 'error' ? 'red' : 'yellow'}">${item.type}</span></td>
+                    <td class="text-sm font-500">${item.issue}</td>
+                    <td style="text-align:right">
+                      <button class="btn btn-sm ${item.actionId === 'lock' ? 'btn-success' : 'btn-primary'} audit-action-btn" 
+                        data-action="${item.actionId}" 
+                        data-date="${item.date}" 
+                        data-empid="${item.employeeId}"
+                        data-refid="${item.refId}">
+                        ${item.action}
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Quick Actions Footer -->
+        <div class="flex justify-between mt-6 p-4 bg-body rounded-lg">
+           <div class="text-sm text-muted">
+             <strong>Note:</strong> Once all issues above are resolved, the payroll processing table will automatically become available.
+           </div>
+           <button class="btn btn-secondary" onclick="Router.navigate('attendance')">Open Attendance Module</button>
+        </div>
+
+      </div>
+    `;
+
+    // Attach Events
+    container().querySelectorAll('.audit-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        const date   = btn.dataset.date;
+        const empId  = btn.dataset.empid;
+        const refId  = btn.dataset.refid;
+
+        if (action === 'lock') {
+          const res = await API.finalizeAttendance({ date, employeeId: empId });
+          if (res.success) {
+            Toast.success(`Attendance locked for ${date}`);
+            load(); // Re-audit
+          } else Toast.error(res.error);
+        } else if (action === 'open') {
+          Router.navigate('attendance', { date, employeeId: empId, mode: 'bulk' });
+        } else if (action === 'open_month') {
+          Router.navigate('attendance', { employeeId: empId, mode: 'monthly' });
+        } else if (action === 'review_ot') {
+          Router.navigate('attendance', { date, employeeId: empId, mode: 'bulk' });
+        }
+      });
+    });
+
+    document.getElementById('audit-lock-all')?.addEventListener('click', async () => {
+      Modal.confirm('Lock all finalized records for this month?', async () => {
+        // In a real system, we'd have a bulkLock IPC. Here we do it via existing finalize
+        Toast.info('Processing bulk lock...');
+        const toLock = issues.filter(i => i.actionId === 'lock');
+        for (const item of toLock) {
+           await API.finalizeAttendance({ date: item.date, employeeId: item.employeeId });
+        }
+        Toast.success('Bulk locking complete.');
+        load();
+      });
+    });
+  }
+
   function modeBadge(mode) {
     const map = { Cash: 'badge-accent', UPI: 'badge-success', Bank: 'badge-warning' };
     return `<span class="badge ${map[mode] || 'badge-muted'}">${mode}</span>`;
@@ -404,7 +965,7 @@ const PaymentsPage = (() => {
 
   // ── Auto-Calculate Pay Modal ───────────────────────────────────────────────
   function openPayModal(calc) {
-    const perDayRs       = (Math.round(calc.grossSalary / 30) / 100);
+    const perDayRs       = (calc.grossSalary / calc.totalDays) / 100;
     const openingRs      = (calc.openingBalance / 100);
     const salaryEarnedRs = (calc.salaryEarned / 100);
     const otPayRs        = (calc.overtimePay / 100);
@@ -413,6 +974,7 @@ const PaymentsPage = (() => {
     const travelRs       = (calc.travelAllowance / 100);
     const otherDedRs     = (calc.otherDeductions / 100);
     const reimbursedRs   = ((calc.reimbursedExpenses || 0) / 100);
+    const bonusRs        = ((calc.bonusAmount || 0) / 100);
     let   netPayableRs   = (calc.netPayable / 100);
 
     const fmtR = (v) => '\u20b9' + Math.round(v).toLocaleString('en-IN');
@@ -437,7 +999,7 @@ const PaymentsPage = (() => {
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Half Day (H)</span><span class="font-600">${calc.halfDays} days</span></div>
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Weekly Off (WO)</span><span class="font-600">${calc.woDays} days</span></div>
                 <div class="calc-row" style="padding:2px 0"><span class="text-muted">Absent (A)</span><span class="font-600 text-danger">${calc.absentDays} days</span></div>
-                <div class="calc-row" style="padding:2px 0"><span class="text-muted">Effective Days</span><span class="font-600">${calc.attendanceDays} / 30</span></div>
+                <div class="calc-row" style="padding:2px 0"><span class="text-muted">Effective Days</span><span class="font-600">${calc.attendanceDays} / ${calc.totalDays}</span></div>
               </div>
             </div>
 
@@ -448,6 +1010,7 @@ const PaymentsPage = (() => {
               <div class="calc-row"><span class="text-muted">Food Allowance</span><span class="font-600" id="pay-food-display">${fmtR(foodRs)}</span></div>
               <div class="calc-row"><span class="text-muted">Travel Allowance</span><span class="font-600" id="pay-travel-display">${fmtR(travelRs)}</span></div>
               <div class="calc-row"><span class="text-muted">Expenses Reimbursed</span><span class="font-600 text-success" id="pay-reimbursed-display">+${fmtR(reimbursedRs)}</span></div>
+              <div class="calc-row"><span class="text-muted">Bonus</span><span class="font-600 text-success">+${fmtR(bonusRs)}</span></div>
               <div class="calc-row" style="border-top:1px dashed var(--border); padding-top:8px; margin-top:8px">
                 <span class="font-600">Gross Salary Earned</span><span class="font-600" id="pay-gross-display">${fmtR(salaryEarnedRs)}</span>
               </div>
@@ -542,7 +1105,7 @@ const PaymentsPage = (() => {
       document.getElementById('pay-food-display').textContent = fmtR(addedFood);
       document.getElementById('pay-travel-display').textContent = fmtR(addedTravel);
 
-      const grossEarned = effectiveRs + otPayRs + addedFood + addedTravel + reimbursedRs;
+      const grossEarned = effectiveRs + otPayRs + addedFood + addedTravel + reimbursedRs + bonusRs;
       document.getElementById('pay-gross-display').textContent = fmtR(grossEarned);
 
       // Recovery logic in UI
@@ -592,7 +1155,7 @@ const PaymentsPage = (() => {
 
       const foodVal = parseFloat(document.getElementById('ps-food-allow').value) || 0;
       const travelVal = parseFloat(document.getElementById('ps-travel-allow').value) || 0;
-      const salaryEarned = calc.effectiveSalary + calc.overtimePay + (foodVal * 100) + (travelVal * 100);
+      const salaryEarned = calc.effectiveSalary + calc.overtimePay + (foodVal * 100) + (travelVal * 100) + (calc.reimbursedExpenses || 0) + (calc.bonusAmount || 0);
 
       const payload = {
         employeeId:      calc.employeeId,
@@ -600,7 +1163,7 @@ const PaymentsPage = (() => {
         year:            _filterYear,
         grossSalary:     calc.grossSalary,
         attendanceDays:  calc.attendanceDays,
-        totalDays:       30,
+        totalDays:       calc.totalDays,
         useAttendance:   calc.useAttendance,
         effectiveSalary: calc.effectiveSalary,
         salaryEarned:    salaryEarned,
@@ -609,6 +1172,7 @@ const PaymentsPage = (() => {
         foodAllowanceRupees:   foodVal,
         travelAllowanceRupees: travelVal,
         reimbursedExpenses:    calc.reimbursedExpenses || 0,
+        bonusAmount:           calc.bonusAmount || 0,
         paidAmountRupees: parseFloat(paidInp.value) || 0,
         mode:            document.getElementById('ps-mode').value,
         paymentDate:     document.getElementById('ps-pay-date').value,
@@ -637,6 +1201,35 @@ const PaymentsPage = (() => {
     });
   }
 
+  function showProblemDates(empName, type, dates) {
+    let title = '';
+    if (type === 'unfinalized') title = 'Unfinalized Attendance Dates';
+    else if (type === 'missing_project') title = 'Missing Project Dates';
+    else if (type === 'pending_ot') title = 'Pending OT Review Dates';
+    else title = 'Problem Dates';
+
+    Modal.open({
+      title: `${title} — ${empName}`,
+      size: 'modal-sm',
+      body: `
+        <div class="alert alert-info mb-3" style="font-size: 0.82rem; padding: 8px 12px; margin-bottom: 12px">
+          Click a date below to open that daily attendance sheet.
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto; padding:2px;">
+          ${dates.map(date => `
+            <button class="btn btn-secondary text-left flex justify-between items-center" 
+                    style="width: 100%; font-size: 0.85rem; padding: 8px 12px;"
+                    onclick="Modal.close(); Router.navigate('attendance', { date: '${date}', mode: 'bulk' })">
+              <span>📅 ${Helpers.formatDate(date)}</span>
+              <span class="text-xs" style="color:var(--accent)">Go to date →</span>
+            </button>
+          `).join('')}
+        </div>
+      `,
+      footer: `<button class="btn btn-secondary" onclick="Modal.close()">Close</button>`
+    });
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
-  return { init };
+  return { init, showProblemDates };
 })();

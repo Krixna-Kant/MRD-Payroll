@@ -9,12 +9,18 @@ const ExpensesPage = (() => {
   let _employees = [];
   let _filterStatus = '';
   let _projects = [];
+  let _searchQuery = '';
 
   async function init() {
+    if (AppState.get('user')?.role === 'hr') {
+      Toast.error("Access Denied: HR cannot manage financial allowances.");
+      Router.navigate('dashboard');
+      return;
+    }
     headerActs().innerHTML = `
       <button class="btn btn-primary" id="add-exp-btn">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="btn-text">Submit Expense</span>
+        <span class="btn-text">Log Allowance</span>
       </button>
     `;
     document.getElementById('add-exp-btn').addEventListener('click', openForm);
@@ -25,21 +31,8 @@ const ExpensesPage = (() => {
     const projRes = await window.API.getProjects({ status: 'Ongoing' });
     if (projRes.success) _projects = projRes.projects;
 
-    await load();
-  }
-
-  async function load() {
-    try {
-      const res = await window.API.getExpenses({ status: _filterStatus });
-      _expenses = res.expenses || [];
-      render();
-    } catch (err) {
-      Toast.error('Failed to load expenses: ' + err.message);
-    }
-  }
-
-  function render() {
-    const totalAmount = _expenses.reduce((sum, e) => sum + e.amount, 0);
+    _filterStatus = '';
+    _searchQuery = '';
 
     container().innerHTML = `
       <div class="toolbar">
@@ -50,75 +43,18 @@ const ExpensesPage = (() => {
             <option value="approved" ${_filterStatus === 'approved' ? 'selected' : ''}>Approved</option>
             <option value="rejected" ${_filterStatus === 'rejected' ? 'selected' : ''}>Rejected</option>
           </select>
+          <div class="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="exp-search" class="form-input" placeholder="Search by name, project, category..." value="" style="width:280px" />
+          </div>
         </div>
         <div class="toolbar-right">
           <div class="card" style="padding:10px 18px">
-            <span class="text-sm font-600">Total: <span class="amount">${window.API.fmtRupees(totalAmount)}</span></span>
+            <span class="text-sm font-600">Total: <span class="amount" id="exp-total-amount">₹0.00</span></span>
           </div>
         </div>
       </div>
-
-      ${_expenses.length === 0 ? `
-        <div class="empty-state">
-          <h3>No expense claims found</h3>
-          <p class="text-muted">No expenses match your criteria.</p>
-        </div>
-      ` : `
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Employee / Project</th>
-                <th>Category</th>
-                <th style="text-align:right">Amount</th>
-                <th>Status</th>
-                <th>Reimbursement</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${_expenses.map(e => `
-                <tr>
-                  <td class="text-muted text-sm">${Helpers.formatDate(e.date)}</td>
-                  <td>
-                    <div class="font-600">${Helpers.escapeHtml(e.employee_name)}</div>
-                    <div class="text-xs text-muted">Project: ${Helpers.escapeHtml(e.project_name || 'N/A')}</div>
-                  </td>
-                  <td>
-                    <span class="badge badge-subtle">${Helpers.escapeHtml(e.category)}</span>
-                  </td>
-                  <td style="text-align:right" class="amount font-600">
-                    ${window.API.fmtRupees(e.amount)}
-                  </td>
-                  <td>${statusBadge(e.status)}</td>
-                  <td>
-                    ${e.payment_id 
-                      ? `<span class="badge badge-success">Settled in Salary</span>` 
-                      : (e.status === 'approved' ? `<span class="badge badge-warning">Pending Salary</span>` : '—')}
-                  </td>
-                  <td>
-                    <div class="flex gap-2">
-                      ${e.status === 'pending' ? `
-                        <button class="btn btn-sm btn-success exp-approve-btn" data-id="${e.id}">Approve</button>
-                        <button class="btn btn-sm btn-danger exp-reject-btn" data-id="${e.id}">Reject</button>
-                      ` : ''}
-                      ${e.status === 'approved' ? `
-                         <button class="btn btn-sm btn-accent exp-wa-btn" 
-                            data-phone="${_employees.find(emp => emp.id === e.employee_id)?.phone || ''}"
-                            data-name="${Helpers.escapeHtml(e.employee_name)}"
-                            data-amount="${window.API.fmtRupees(e.amount)}"
-                            data-project="${Helpers.escapeHtml(e.project_name || 'General')}">💬 Notify</button>
-                      ` : ''}
-                      <button class="btn btn-sm btn-ghost exp-del-btn" data-id="${e.id}" title="Delete">✕</button>
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
+      <div id="expenses-list-container"></div>
     `;
 
     document.getElementById('exp-filter-status')?.addEventListener('change', e => {
@@ -126,20 +62,142 @@ const ExpensesPage = (() => {
       load();
     });
 
-    container().querySelectorAll('.exp-approve-btn').forEach(btn => {
+    const searchEl = document.getElementById('exp-search');
+    searchEl?.addEventListener('input', Helpers.debounce(e => {
+      _searchQuery = e.target.value;
+      renderList();
+    }, 200));
+
+    await load();
+  }
+
+  async function load() {
+    try {
+      const res = await window.API.getExpenses({ status: _filterStatus });
+      _expenses = res.expenses || [];
+      _expenses.sort((a, b) => {
+        const getWeight = (s) => {
+          if (s === 'pending') return 1;
+          if (s === 'approved') return 2;
+          if (s === 'rejected') return 3;
+          return 4;
+        };
+        const wA = getWeight(a.status);
+        const wB = getWeight(b.status);
+        if (wA !== wB) return wA - wB;
+        
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        return dateB.localeCompare(dateA); // Newest first
+      });
+      renderList();
+    } catch (err) {
+      Toast.error('Failed to load allowances: ' + err.message);
+    }
+  }
+
+  function renderList() {
+    const listContainer = document.getElementById('expenses-list-container');
+    if (!listContainer) return;
+
+    const filteredExpenses = _expenses.filter(e => {
+      const query = _searchQuery.toLowerCase().trim();
+      if (!query) return true;
+      const empName = (e.employee_name || '').toLowerCase();
+      const projName = (e.project_name || '').toLowerCase();
+      const category = (e.category || '').toLowerCase();
+      const amountStr = String(e.amount / 100).toLowerCase();
+      const dateStr = Helpers.formatDate(e.date).toLowerCase();
+      return empName.includes(query) || projName.includes(query) || category.includes(query) || amountStr.includes(query) || dateStr.includes(query);
+    });
+
+    const totalAmount = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalEl = document.getElementById('exp-total-amount');
+    if (totalEl) {
+      totalEl.textContent = window.API.fmtRupees(totalAmount);
+    }
+
+    if (filteredExpenses.length === 0) {
+      listContainer.innerHTML = `
+        <div class="empty-state">
+          <h3>No allowance records found</h3>
+          <p class="text-muted">${_searchQuery ? 'No results match your search query.' : 'No allowance records match your criteria.'}</p>
+        </div>
+      `;
+      return;
+    }
+
+    listContainer.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Employee / Project</th>
+              <th>Category</th>
+              <th style="text-align:right">Amount</th>
+              <th>Status</th>
+              <th>Reimbursement</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredExpenses.map(e => `
+              <tr>
+                <td class="text-muted text-sm">${Helpers.formatDate(e.date)}</td>
+                <td>
+                  <div class="font-600">${Helpers.escapeHtml(e.employee_name)}</div>
+                  <div class="text-xs text-muted">Project: ${Helpers.escapeHtml(e.project_name || 'N/A')}</div>
+                </td>
+                <td>
+                  <span class="badge badge-subtle">${Helpers.escapeHtml(e.category)}</span>
+                </td>
+                <td style="text-align:right" class="amount font-600">
+                  ${window.API.fmtRupees(e.amount)}
+                </td>
+                <td>${statusBadge(e.status)}</td>
+                <td>
+                  ${e.payment_id 
+                    ? `<span class="badge badge-success">Settled in Salary</span>` 
+                    : (e.status === 'approved' ? `<span class="badge badge-warning">Pending Salary</span>` : '—')}
+                </td>
+                <td>
+                  <div class="flex gap-2">
+                    ${e.status === 'pending' ? `
+                      <button class="btn btn-sm btn-success exp-approve-btn" data-id="${e.id}">Approve</button>
+                      <button class="btn btn-sm btn-danger exp-reject-btn" data-id="${e.id}">Reject</button>
+                    ` : ''}
+                    ${e.status === 'approved' ? `
+                       <button class="btn btn-sm btn-accent exp-wa-btn" 
+                          data-phone="${_employees.find(emp => emp.id === e.employee_id)?.phone || ''}"
+                          data-name="${Helpers.escapeHtml(e.employee_name)}"
+                          data-amount="${window.API.fmtRupees(e.amount)}"
+                          data-project="${Helpers.escapeHtml(e.project_name || 'General')}">💬 Notify</button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-ghost exp-del-btn" data-id="${e.id}" title="Delete">✕</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    listContainer.querySelectorAll('.exp-approve-btn').forEach(btn => {
       btn.addEventListener('click', () => updateStatus(parseInt(btn.dataset.id), 'approved'));
     });
-    container().querySelectorAll('.exp-reject-btn').forEach(btn => {
+    listContainer.querySelectorAll('.exp-reject-btn').forEach(btn => {
       btn.addEventListener('click', () => updateStatus(parseInt(btn.dataset.id), 'rejected'));
     });
-    container().querySelectorAll('.exp-del-btn').forEach(btn => {
+    listContainer.querySelectorAll('.exp-del-btn').forEach(btn => {
       btn.addEventListener('click', () => deleteExpense(parseInt(btn.dataset.id)));
     });
-    container().querySelectorAll('.exp-wa-btn').forEach(btn => {
+    listContainer.querySelectorAll('.exp-wa-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         let phone = btn.dataset.phone.replace(/\D/g, '');
         if (phone.length === 10) phone = '91' + phone;
-        const msg = encodeURIComponent(`Dear ${btn.dataset.name},\n\nYour expense claim of *${btn.dataset.amount}* for ${btn.dataset.project} project has been *APPROVED*. It will be credited with your upcoming salary.\n\nThank you!`);
+        const msg = encodeURIComponent(`Dear ${btn.dataset.name},\n\nYour allowance record of *${btn.dataset.amount}* for ${btn.dataset.project} project has been *APPROVED*. It will be credited with your upcoming salary.\n\nThank you!`);
         if (!phone) { Toast.warning('No phone for this employee.'); return; }
         window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
       });
@@ -152,10 +210,10 @@ const ExpensesPage = (() => {
   }
 
   async function updateStatus(id, newStatus) {
-    Modal.confirm(`Mark this expense as ${newStatus}?`, async () => {
+    Modal.confirm(`Mark this allowance as ${newStatus}?`, async () => {
       const r = await window.API.updateExpenseStatus({ id, status: newStatus });
       if (r.success) {
-        Toast.success(`Expense ${newStatus}.`);
+        Toast.success(`Allowance ${newStatus}.`);
         load();
       } else {
         Toast.error(r.error);
@@ -164,7 +222,7 @@ const ExpensesPage = (() => {
   }
 
   async function deleteExpense(id) {
-    Modal.confirm('Delete this expense claim? If it was settled, it will NOT adjust the salary payment.', async () => {
+    Modal.confirm('Delete this allowance record? If it was settled, it will NOT adjust the salary payment.', async () => {
       const r = await window.API.deleteExpense(id);
       if (r.success) {
         Toast.success('Deleted.');
@@ -177,7 +235,7 @@ const ExpensesPage = (() => {
 
   function openForm() {
     Modal.open({
-      title: 'Submit Expense Claim',
+      title: 'Log Food & Travel Allowance',
       body: `
         <div class="form-group mb-3">
           <label class="form-label">Employee</label>
@@ -196,10 +254,8 @@ const ExpensesPage = (() => {
           <div class="form-group">
             <label class="form-label">Category</label>
             <select id="ef-category" class="form-select">
+              <option value="Food">Food</option>
               <option value="Travel">Travel</option>
-              <option value="Materials">Materials/Supplies</option>
-              <option value="Meals">Meals</option>
-              <option value="Other">Other</option>
             </select>
           </div>
           <div class="form-group">
@@ -235,14 +291,14 @@ const ExpensesPage = (() => {
         projectId,
         projectName,
         category,
-        amount: Math.round(amountRs * 100), // convert to paisa
+        amount: amountRs, 
         date,
         status: 'approved' // auto-approve when admin creates
       });
       Helpers.setLoading('ef-save', false);
 
       if (r.success) {
-        Toast.success('Expense claim approved. Will be settled in next payroll.');
+        Toast.success('Allowance recorded successfully.');
         Modal.close();
         load();
       } else {

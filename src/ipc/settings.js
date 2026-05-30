@@ -14,6 +14,12 @@ module.exports = function registerSettingsHandlers(ipcMain) {
     return { success: true, settings };
   });
 
+  // ── Get Database Path ─────────────────────────────────────────────────────
+  ipcMain.handle('settings:getDbPath', async () => {
+    const { getDBPath } = require('../database/db');
+    return { success: true, dbPath: getDBPath() };
+  });
+
   // ── Save Settings ─────────────────────────────────────────────────────────
   ipcMain.handle('settings:save', async (_, newSettings) => {
     const db = getDB();

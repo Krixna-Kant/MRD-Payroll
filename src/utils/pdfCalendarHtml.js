@@ -60,6 +60,9 @@ function buildHtml(employee, records, summary, month, year, companyName) {
       ${Array(firstDay).fill('<div class="att-calendar-cell empty"></div>').join('')}
   `;
 
+  const tzOffset = new Date().getTimezoneOffset() * 60000;
+  const todayStr = new Date(Date.now() - tzOffset).toISOString().split('T')[0];
+
   let woCount = 0; // Recalculate WO as it might not be in summary directly
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -69,7 +72,7 @@ function buildHtml(employee, records, summary, month, year, companyName) {
     const hasOT = rec && rec.overtime_hours > 0;
     const projName = rec && rec.project_name ? rec.project_name : '';
 
-    if (!status && isSun) status = 'WO';
+    if (!status && isSun && dateStr <= todayStr) status = 'WO';
     if (status === 'WO') woCount++;
 
     let statusHtml = `<div class="att-btn ${status || ''}">${status || '—'}</div>`;

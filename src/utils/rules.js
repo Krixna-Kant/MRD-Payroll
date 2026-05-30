@@ -102,4 +102,59 @@ function processMonthlyAttendanceStats(db, empId, effectiveStart, end) {
   return { P, A, H, WO, effectiveDays, totalOvertimeHours, sundayWorkDays, totalDaysInPeriod: Math.round((endD - startD)/(1000*60*60*24)) + 1 };
 }
 
-module.exports = { processMonthlyAttendanceStats };
+/**
+ * Calculates leave statistics for an employee for a specific year.
+ * Policy: 15 Paid Leaves (CL/SL) per year.
+ */
+function getLeaveStats(db, empId, year) {
+  const yearStart = new Date(`${year}-01-01T00:00:00`);
+  const yearEnd   = new Date(`${year}-12-31T23:59:59`);
+
+  // Select any approved leave that overlaps with this year
+  const approvedLeaves = db.prepare(`
+    SELECT type, from_date, to_date, total_days 
+    FROM leaves 
+    WHERE employee_id = ? 
+      AND status = 'approved' 
+      AND NOT (to_date < ? OR from_date > ?)
+  `).all(empId, `${year}-01-01`, `${year}-12-31`);
+
+  let usedPaid = 0;
+  let unpaid = 0;
+
+  approvedLeaves.forEach(l => {
+    // Only count days that fall WITHIN the requested year
+    const lStart = new Date(l.from_date + 'T00:00:00');
+    const lEnd   = new Date(l.to_date + 'T00:00:00');
+    
+    const actualStart = lStart < yearStart ? yearStart : lStart;
+    const actualEnd   = lEnd > yearEnd ? yearEnd : lEnd;
+    
+    let curr = new Date(actualStart);
+    while (curr <= actualEnd) {
+      // RULE: Do NOT count Sundays against the 15-day quota
+      if (curr.getDay() !== 0) { 
+        if (l.type === 'LWP') {
+          unpaid++;
+        } else {
+          usedPaid++;
+        }
+      }
+      curr.setDate(curr.getDate() + 1);
+    }
+  });
+
+  const totalAllowed = 15;
+  const remaining = Math.max(0, totalAllowed - usedPaid);
+  const exceeded = Math.max(0, usedPaid - totalAllowed);
+
+  return {
+    totalAllowed,
+    usedPaid,
+    remaining,
+    unpaid,
+    exceeded // Any days above 15 that were marked as CL/SL but should be LWP
+  };
+}
+
+module.exports = { processMonthlyAttendanceStats, getLeaveStats };

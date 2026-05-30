@@ -9,37 +9,63 @@ module.exports = function registerAuditHandlers(ipcMain) {
       let query = 'SELECT * FROM activity_logs WHERE 1=1';
       const params = [];
 
+      // 1. Date Range / Specific Date / Month
+      if (filter.date) {
+        query += ' AND date(timestamp) = ?';
+        params.push(filter.date);
+      } else if (filter.month && filter.year) {
+        const m = String(filter.month).padStart(2, '0');
+        query += ' AND timestamp >= ? AND timestamp <= ?';
+        params.push(`${filter.year}-${m}-01 00:00:00`, `${filter.year}-${m}-31 23:59:59`);
+      } else if (filter.fromDate && filter.toDate) {
+        query += ' AND timestamp >= ? AND timestamp <= ?';
+        params.push(`${filter.fromDate} 00:00:00`, `${filter.toDate} 23:59:59`);
+      }
+
+      // 2. Module
       if (filter.module) {
         query += ' AND module = ?';
         params.push(filter.module);
       }
+
+      // 3. User
       if (filter.user_name) {
         query += ' AND user_name LIKE ?';
         params.push(`%${filter.user_name}%`);
       }
+
+      // 4. Action
       if (filter.action) {
-        query += ' AND action LIKE ?';
-        params.push(`%${filter.action}%`);
+        query += ' AND action = ?';
+        params.push(filter.action);
+      }
+
+      // 5. Global Search
+      if (filter.search) {
+        query += ' AND (description LIKE ? OR user_name LIKE ? OR module LIKE ?)';
+        const q = `%${filter.search}%`;
+        params.push(q, q, q);
       }
       
-      query += ' ORDER BY timestamp DESC LIMIT 500'; // Add limit to avoid performance hits
+      query += ' ORDER BY timestamp DESC LIMIT 1000'; 
       const logs = db.prepare(query).all(...params);
-      return { success: true, logs };
+
+      // 6. Stats for the Top Cards
+      const stats = {
+        total: logs.length,
+        payroll: logs.filter(l => l.module === 'Payroll').length,
+        attendance: logs.filter(l => l.module === 'Attendance').length,
+        critical: logs.filter(l => ['Deleted', 'Rejected'].includes(l.action)).length
+      };
+
+      return { success: true, logs, stats };
     } catch (err) {
       console.error('[Audit IPC] Error fetching logs:', err);
       return { success: false, error: err.message };
     }
   });
 
-  ipcMain.handle('audit:delete', async (_, id) => {
-    try {
-      const db = getDB();
-      db.prepare('DELETE FROM activity_logs WHERE id = ?').run(id);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
+  // audit:delete removed for security/audit integrity
 
   ipcMain.handle('audit:exportExcel', async () => {
     try {

@@ -189,7 +189,11 @@ const StaffDocsPage = (() => {
             <input id="doc-search-inner" class="form-input" placeholder="Search in this folder..." value="${Helpers.escapeHtml(_searchQ)}" style="width:280px" />
           </div>
         </div>
-        <div class="toolbar-right">
+        <div class="toolbar-right flex gap-2">
+          <button id="download-dossier-btn" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download PDF Dossier
+          </button>
           <button id="add-doc-btn-inner" class="btn btn-primary">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Upload Document
@@ -224,6 +228,29 @@ const StaffDocsPage = (() => {
 
     document.getElementById('add-doc-btn-inner').addEventListener('click', () => openUploadModal(_activeEmployee.id));
 
+    const dlBtn = document.getElementById('download-dossier-btn');
+    if (dlBtn) {
+      dlBtn.addEventListener('click', async () => {
+        if (empDocs.length === 0) {
+          Toast.error('No documents available to download.');
+          return;
+        }
+        Helpers.setLoading('download-dossier-btn', true);
+        try {
+          const res = await API.compileStaffDocs({ employeeId: _activeEmployee.id });
+          if (res.success) {
+            Toast.success('PDF Dossier downloaded successfully.');
+          } else if (res.error !== 'Cancelled.') {
+            Toast.error(res.error || 'Failed to download dossier.');
+          }
+        } catch (err) {
+          Toast.error(err.message || 'Error occurred during compilation.');
+        } finally {
+          Helpers.setLoading('download-dossier-btn', false);
+        }
+      });
+    }
+
     container().querySelectorAll('.doc-preview-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); previewDoc(parseInt(btn.dataset.id)); }));
     container().querySelectorAll('.doc-ocr-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); runOcr(parseInt(btn.dataset.id)); }));
     container().querySelectorAll('.doc-del-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); deleteDoc(parseInt(btn.dataset.id), btn.dataset.name); }));
@@ -255,9 +282,11 @@ const StaffDocsPage = (() => {
             <button class="btn btn-icon btn-ghost doc-preview-btn" data-id="${d.id}" title="Preview">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
+            ${AppState.get('user')?.role === 'admin' || AppState.get('settings')?.hr_delete_access === '1' ? `
             <button class="btn btn-icon btn-ghost doc-del-btn" data-id="${d.id}" data-name="${Helpers.escapeHtml(d.document_name)}" title="Delete">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
+            ` : ''}
           </div>
         </div>
         <div class="doc-card-body">
@@ -324,9 +353,11 @@ const StaffDocsPage = (() => {
             <button class="btn btn-sm btn-accent doc-ocr-btn" data-id="${d.id}" title="Run OCR / View Data">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
             </button>
+            ${AppState.get('user')?.role === 'admin' || AppState.get('settings')?.hr_delete_access === '1' ? `
             <button class="btn btn-sm btn-danger doc-del-btn" data-id="${d.id}" data-name="${Helpers.escapeHtml(d.document_name || '')}" title="Delete">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
+            ` : ''}
           </div>
         </td>
       </tr>
@@ -436,6 +467,7 @@ const StaffDocsPage = (() => {
       if (res.success) {
         Modal.close();
         Toast.success('Document uploaded successfully.');
+        EventBus.emit('data:ocr', { action: 'upload' });
         load();
       } else {
         errEl.textContent = res.error;
@@ -493,6 +525,7 @@ const StaffDocsPage = (() => {
       doc.ocr_status = 'completed';
       doc.ocr_data = JSON.stringify(res.extracted);
       showOcrDataModal(doc);
+      EventBus.emit('data:ocr', { action: 'complete', id });
       load();
     } else {
       Toast.error(res.error);

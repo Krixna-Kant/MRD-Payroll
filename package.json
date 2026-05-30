@@ -14,10 +14,12 @@
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.4.3",
     "exceljs": "^4.4.0",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.14.0",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
+    "asar": "^3.2.0",
     "electron": "^28.2.0",
     "electron-builder": "^24.13.3",
     "electron-rebuild": "^3.2.9"
@@ -30,6 +32,8 @@
       "output": "dist"
     },
     "win": {
+      "sign": null,
+      "signingHashAlgorithms": null,
       "target": [
         {
           "target": "nsis",

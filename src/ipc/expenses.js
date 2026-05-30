@@ -10,8 +10,11 @@ const fs = require('fs');
 module.exports = function registerExpenseHandlers(ipcMain) {
 
   // ── Get All Expenses (filterable) ─────────────────────────────────────────
-  ipcMain.handle('expenses:getAll', async (_, filter = {}) => {
+  ipcMain.handle('expenses:getAll', async (_, filter = {}, userRole) => {
     const db = getDB();
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'hr_access_financials'").get();
+    const canAccess = userRole === 'admin' || (userRole === 'hr' && setting && setting.value === '1');
+    if (!canAccess) return { success: false, error: 'Unauthorized: Expense management is restricted to Administrators or authorized HR.' };
     let query = `
       SELECT ex.*, e.name as employee_name, e.phone as employee_phone
       FROM expenses ex
@@ -37,7 +40,11 @@ module.exports = function registerExpenseHandlers(ipcMain) {
 
   // ── Create Expense Claim ──────────────────────────────────────────────────
   ipcMain.handle('expenses:create', async (_, data) => {
+    const { userRole } = data;
     const db = getDB();
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'hr_access_financials'").get();
+    const canAccess = userRole === 'admin' || (userRole === 'hr' && setting && setting.value === '1');
+    if (!canAccess) return { success: false, error: 'Unauthorized: Expense management is restricted to Administrators or authorized HR.' };
     const { employeeId, projectName, projectId, category, amount, date, remarks, attachmentPath, createdBy, status } = data;
 
     if (!employeeId || !category || !amount || !date) {
@@ -53,7 +60,14 @@ module.exports = function registerExpenseHandlers(ipcMain) {
       // Audit Log
       const { logActivity } = require('../utils/audit');
       const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(employeeId);
-      logActivity('Expenses', 'Added', `Added ${category} expense of ₹${amount/100} for ${emp?.name}`, null, `Amount: ₹${amount/100}, Status: ${status || 'pending'}`);
+      const userObj = db.prepare('SELECT id, full_name as fullName, username FROM users WHERE id = ?').get(createdBy);
+      logActivity('Expenses', 'Added', `Added ${category} expense of ₹${amount/100} for ${emp?.name}`, null, `Amount: ₹${amount/100}, Status: ${status || 'pending'}`, userObj);
+
+      // Generate System Alert
+      db.prepare(`
+        INSERT INTO alerts (title, message, type, module)
+        VALUES (?, ?, ?, ?)
+      `).run('New Expense Claim', `${emp?.name} submitted a ${category} claim for ₹${amount/100}.`, 'Info', 'Expenses');
 
       return { success: true, expenseId: result.lastInsertRowid };
     } catch (err) {
@@ -63,8 +77,11 @@ module.exports = function registerExpenseHandlers(ipcMain) {
   });
 
   // ── Update Expense Status ─────────────────────────────────────────────────
-  ipcMain.handle('expenses:updateStatus', async (_, id, status) => {
+  ipcMain.handle('expenses:updateStatus', async (_, { id, status, operatorId, userRole }) => {
     const db = getDB();
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'hr_access_financials'").get();
+    const canAccess = userRole === 'admin' || (userRole === 'hr' && setting && setting.value === '1');
+    if (!canAccess) return { success: false, error: 'Unauthorized: Expense management is restricted to Administrators or authorized HR.' };
     try {
       const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
       db.prepare('UPDATE expenses SET status = ?, updated_at = (strftime(\'%s\', \'now\')) WHERE id = ?').run(status, id);
@@ -73,7 +90,8 @@ module.exports = function registerExpenseHandlers(ipcMain) {
       if (expense) {
         const { logActivity } = require('../utils/audit');
         const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(expense.employee_id);
-        logActivity('Expenses', status === 'approved' ? 'Approved' : 'Rejected', `${status === 'approved' ? 'Approved' : 'Rejected'} expense of ₹${expense.amount/100} for ${emp?.name}`, `Status: ${expense.status}`, `Status: ${status}`);
+        const userObj = db.prepare('SELECT id, full_name as fullName, username FROM users WHERE id = ?').get(operatorId || expense.created_by);
+        logActivity('Expenses', status === 'approved' ? 'Approved' : 'Rejected', `${status === 'approved' ? 'Approved' : 'Rejected'} expense of ₹${expense.amount/100} for ${emp?.name}`, `Status: ${expense.status}`, `Status: ${status}`, userObj);
       }
 
       return { success: true };
@@ -84,8 +102,11 @@ module.exports = function registerExpenseHandlers(ipcMain) {
   });
 
   // ── Delete Expense Claim ──────────────────────────────────────────────────
-  ipcMain.handle('expenses:delete', async (_, id) => {
+  ipcMain.handle('expenses:delete', async (_, { id, operatorId, userRole }) => {
     const db = getDB();
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'hr_access_financials'").get();
+    const canAccess = userRole === 'admin' || (userRole === 'hr' && setting && setting.value === '1');
+    if (!canAccess) return { success: false, error: 'Unauthorized: Expense management is restricted to Administrators or authorized HR.' };
     try {
       const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
       db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
@@ -94,7 +115,8 @@ module.exports = function registerExpenseHandlers(ipcMain) {
       if (expense) {
         const { logActivity } = require('../utils/audit');
         const emp = db.prepare('SELECT name FROM employees WHERE id = ?').get(expense.employee_id);
-        logActivity('Expenses', 'Deleted', `Deleted expense of ₹${expense.amount/100} for ${emp?.name}`, `Amount: ₹${expense.amount/100}`, null);
+        const userObj = db.prepare('SELECT id, full_name as fullName, username FROM users WHERE id = ?').get(operatorId || expense.created_by);
+        logActivity('Expenses', 'Deleted', `Deleted expense of ₹${expense.amount/100} for ${emp?.name}`, `Amount: ₹${expense.amount/100}`, null, userObj);
       }
 
       return { success: true };

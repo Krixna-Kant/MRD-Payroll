@@ -11,3 +11,7 @@ release/
 *.db
 *.db-shm
 *.db-wal
+
+# Built assets and test outputs
+app.asar
+*.pdf
